@@ -22,3 +22,13 @@ create a printer that can be used in an MC environment and on PC, similar to std
 1. Discuss and finish the final goal description
 2. Implement
 3. Test and debug
+
+## Last discussion seed
+
+What if the syntaxis wil look like that: `<stream_name> << (first out operator) ...`. 
+
+For example: 
+
+```cpp
+cons1 << "Hello, world!" << 123 << 3.14 << '\n';
+```
