@@ -7,7 +7,7 @@ create a printer that can be used in an MC environment and on PC, similar to std
 
 ## Main features 
 
-- **Type-Safe I/O Subsystem
+- **Type-Safe I/O Subsystem**
 - **Dual USART Support**: USART2 (production) and USART3 (debug/calibration) with hardware flow control
 - **DMA Acceleration**: Optional DMA for both USART2 and USART3 Tx channels
 - **Double-Buffered Output**: Bank-switching memory architecture for non-blocking serial transmission
