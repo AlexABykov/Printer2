@@ -233,7 +233,7 @@ small history.
 - Treat the README feature list as a roadmap, not as a description of the current code.
 - Do not start with USART/DMA code. The stream API and the sink boundary are the parts that are hard
   to change later.
-- `config.h` currently contains a `main()` function. That is a placeholder, not a design pattern.
+- `config.h` currently is empty. That is a placeholder, not a design pattern.
 - The CLion/CMake cache names the project `printer_2`; keep the target name consistent unless the
   owner renames it.
 - When a decision in Part 1 §6 is settled, move it into a short "Decisions" subsection in Part 2
