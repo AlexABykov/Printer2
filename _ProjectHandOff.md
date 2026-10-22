@@ -176,6 +176,8 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-20 (session 1) — **`Plans/Config/Config Demand.md` file created; the project is still a skeleton; Next is the demand discussion; then v0 stream API.**
+
 ## Mailbox entry — 2026-10-20 (session 0) — **Bootstrap handoff written; the project is still a skeleton. Next is the v0 stream API.**
 
 **State.** No implementation exists beyond the placeholder. `Printer/` is empty. No test suite, no
