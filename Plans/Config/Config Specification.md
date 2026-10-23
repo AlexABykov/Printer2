@@ -261,7 +261,7 @@ void printerPlatformInit();
 ```
 
 ### `printerInit()` — binding
-Declared in common, **defined per platform** (`Hardware/printerInit_mc.cpp` / `Hardware/printerInit_pc.cpp`), selected by the CMake configuration. Until it runs, every stream writes to `nullSink` (§4). Responsibilities:
+Declared in common, **defined per platform** (`Hardware/mc_PrinterInit.cpp` / `Hardware/pc_PrinterInit.cpp`), selected by the CMake configuration. Until it runs, every stream writes to `nullSink` (§4). Responsibilities:
 
 1. Bind `streamLog.pInner`, `streamMessage.pInner`, `streamError.pInner` by resolving the role→target enums to objects (`McSink::usart2` → `&mcUsart2`, `PcSink::file1` → `&file1`, …). On PC, also set each stream's colour from the `cfg::*Color` constants.
 2. **MC:** point each `fileN`'s backing `UsartStream` at the object named by `cfg::fileBackingUsart`. **PC:** nothing to bind. `fileN` is already a `FileStream` and opens its own `std::ofstream` on `open()`.
@@ -274,7 +274,7 @@ Declared in common, **defined per platform** (`Hardware/printerInit_mc.cpp` / `H
 - `Hardware/` holds `printerPlatformInit()` and the platform-specific `UsartStream` implementation (USART CR/BRR programming, DMA channel setup, GPIO alternate-function setup). It is the only place where the `cfg::*Base` integers are cast to CMSIS pointer types (`reinterpret_cast<USART_TypeDef*>(cfg::usart2Base)`).
 - **Clock configuration is not part of the Printer module.** A future standalone MC boot layer owns RCC/PLL. The Printer receives the resulting frequencies as constants: `cfg::cpuFrequency_MHz`, used only for the DMA backpressure budget, and `cfg::apb1Frequency_Hz` / `cfg::apb2Frequency_Hz`, used only for BRR.
 - GPIO AF setup ownership: **currently owned by `printerPlatformInit()`** in `Hardware/` (see §13.6 for whether to keep or hand off to the host boot layer).
-- On PC, `Hardware/` holds only `printerInit_pc.cpp` (binding and VT-mode setup). No register code is present unless §13.21 decides otherwise. CMake links only the PC translation units.
+- On PC, `Hardware/` holds only `pc_PrinterInit.cpp` (binding and VT-mode setup). No register code is present unless §13.21 decides otherwise. CMake links only the PC translation units.
 
 ## 11. Build system
 

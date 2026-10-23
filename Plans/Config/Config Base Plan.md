@@ -20,11 +20,11 @@ This follows handoff house rule 1 (**PC first**): the configuration and binding 
 - The minimal stream core the binding needs: `BaseStream`, `NullStream`, `Stream` (lazy colour, §5), `ConsoleStream`, and PC `FileStream` (open/close/write only).
 - `printerInit()` / `printerPlatformInit()` for PC, including Windows VT-mode setup.
 - A host test target with a `CaptureStream` (spec §12).
-- A constexpr BRR helper and a host compile-check of `config_mc.h` against a CMSIS stub.
+- A host compile-check of `config_mc.h` against a CMSIS stub.
 
 **Out of scope** (later plans)
 - `Printer` / `prt1`, `operator<<`, `endLine`, `hold`, `StreamGuard`, number formatting, `printf` (§§4, 6). The demo and tests drive streams through `sendByteRaw` / `resetColor` directly.
-- `UsartStream<N>`, DMA double buffering, `updateUsartX()`, `printerInit_mc.cpp`, GPIO AF (§§7, 10, 13.6).
+- `UsartStream<N>`, DMA double buffering, `updateUsartX()`, `mc_PrinterInit.cpp`, BRR calculation, GPIO AF (§§7, 10, 13.6).
 - File markers and the splitter (§13.2, §13.16, §13.17). In this slice, PC `FileStream` writes plain bytes.
 
 ## 3. Proposed layout
@@ -48,8 +48,7 @@ Printer2/
 │   ├── pc_ConsoleStream.h / .cpp   # console0
 │   └── PrinterInit.h           # declares printerInit()
 ├── Hardware/
-│   ├── printerInit_pc.cpp      # binding + printerPlatformInit() for PC
-│   └── mc_brr.h                # constexpr BRR helper (host-testable)
+│   └── pc_PrinterInit.cpp      # binding + printerPlatformInit() for PC
 └── Tests/
     ├── CaptureStream.h
     ├── test_main.cpp           # assert-based runner (D-3)
@@ -86,6 +85,7 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
    - `printer`: static library with `Printer/` + `Hardware/` sources for the platform. Its public include dirs are `Printer/`, `Config/`, `Config/<platform>/`.
    - `printer_2`: the demo; links `printer`.
    - `printer_tests`: host test executable, registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`.
+   - `config_mc_check`: compile-only object library for Phase 6; never linked.
 4. `PRINTER_PLATFORM=MC` without an ARM toolchain file stops with a clear message. The MC library build belongs to a later plan.
 
 **Done when:** a PC configure + build succeeds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no STM32 header on any include path (handoff v0 DoD item).
@@ -120,7 +120,7 @@ Only what the binding and colour rules need.
 - C6: a `Stream` whose `pInner` is a `FileStream` emits no escape bytes (files never colour, §5).
 
 ### Phase 5 — PC binding: `printerInit()` and `printerPlatformInit()`
-1. `Printer/PrinterInit.h` declares `void printerInit();`. `Hardware/printerInit_pc.cpp` defines it:
+1. `Printer/PrinterInit.h` declares `void printerInit();`. `Hardware/pc_PrinterInit.cpp` defines it:
    1. Resolve `PcSink` to an object through a `switch` (`console0`, `file0..file8`) and bind the three `pInner`s.
    2. Set `streamLog.color` / `streamMessage.color` / `streamError.color` from `cfg::*Color`.
    3. Nothing to bind for `fileN` on PC (spec §9 step 2).
@@ -136,18 +136,15 @@ Only what the binding and colour rules need.
 
 ### Phase 6 — `Config/config_mc.h` and host compile-check
 1. Write the header as in spec §9: clocks, `*Base` integers, DMA channels, GPIO pin constants (flagged pending §13.6), `usart2Settings` / `usart3Settings` (`usart3Settings.bufferSize == 0`, per the request), `McSink` and role targets, and the `printerPlatformInit()` declaration. Add `static_assert(isValid(usartNSettings))`.
-2. `Hardware/mc_brr.h`: `constexpr uint16_t brrValue(uint32_t apbHz, uint32_t baud)` returning `(apbHz + baud / 2) / baud`, and `constexpr bool brrInRange(uint32_t apbHz, uint32_t baud)` (result between 16 and 0xFFFF). A `static_assert` inside the function cannot depend on its parameters, so the host check (and later `printerInit_mc.cpp`) asserts `brrInRange` for each `usartNSettings` instead. This keeps `config_mc.h` free of `Hardware/` includes. It is header-only so the host can test it. `printerPlatformInit()` will use it in the MC plan.
-3. `Tests/stubs/stm32f1xx.h` defines only the `*_BASE` macros, with RM0008 values: `USART2_BASE 0x40004400`, `USART3_BASE 0x40004800`, `DMA1_BASE 0x40020000`, `GPIOA_BASE 0x40010800`, `GPIOB_BASE 0x40010C00`.
-4. `test_config_mc_host.cpp` includes `config_mc.h` **directly** (not via `config_platform.h`), with `Tests/stubs/` on its include path. It is a separate object in the test target, so `cfg` from the MC and PC headers never meet in one translation unit.
+2. `Tests/stubs/stm32f1xx.h` defines only the `*_BASE` macros, with RM0008 values: `USART2_BASE 0x40004400`, `USART3_BASE 0x40004800`, `DMA1_BASE 0x40020000`, `GPIOA_BASE 0x40010800`, `GPIOB_BASE 0x40010C00`.
+3. `test_config_mc_host.cpp` includes `config_mc.h` **directly** (not via `config_platform.h`), with `Tests/stubs/` on its include path. It is built as a separate **compile-only** CMake target (`config_mc_check`, an object library that nothing links), not as part of `printer_tests`. The `cfg` constants are `inline constexpr`, so linking MC and PC definitions into one executable would break the one-definition rule.
 
 **Done when** the check compiles and these `static_assert`s hold:
-- `brrValue(36'000'000, 115200) == 313` (0x139, about 115 015 baud, −0.16 %).
-- `brrValue(36'000'000, 230400) == 156` (0x9C).
-- `brrValue(72'000'000, 115200) == 625` (0x271).
 - `cfg::platformHasColor == false`, and `cfg::usart3Settings.bufferSize == 0`.
-- `brrValue(cfg::apb1Frequency_Hz, cfg::usart2Settings.baudrate)` compiles as a constant expression.
+- `isValid(cfg::usart2Settings)` and `isValid(cfg::usart3Settings)`.
+- `cfg::usart2Base`, `cfg::apb1Frequency_Hz` and the role targets are usable as constant expressions.
 
-**Honest limit:** checking the stub's addresses against values written into the same stub is circular. This step proves that `config_mc.h` is constant-evaluable with integer bases (spec §9, A2) and that the BRR arithmetic is right. It does **not** prove the addresses against the real CMSIS header. That check belongs to the MC plan, run with `arm-none-eabi-g++`, `-DSTM32F103xE` (VET6 is high-density), and the vendor `stm32f1xx.h`.
+**Honest limit:** checking the stub's addresses against values written into the same stub is circular. This step proves that `config_mc.h` is constant-evaluable with integer bases (spec §9, A2). It does **not** prove the addresses against the real CMSIS header. That check belongs to the MC plan, run with `arm-none-eabi-g++`, `-DSTM32F103xE` (VET6 is high-density), and the vendor `stm32f1xx.h`.
 
 ## 5. Decisions needed from BY
 
@@ -186,5 +183,5 @@ These spec open items are **not touched** by this plan and do not block it: §13
 ## 8. Next plans (after this one)
 
 1. **Printer core v0:** `Printer` / `prt1`, target switching with `resetColor()` on switch (§5), `endLine`, string, char and integer insertions. This is the handoff's v0 workstream.
-2. **MC Hardware plan:** `UsartStream<N>` (polled first, then DMA), `printerInit_mc.cpp`, `printerPlatformInit()` for the MC with `brrValue`, a real-CMSIS build, and GPIO AF per §13.6.
+2. **MC Hardware plan:** `UsartStream<N>` (polled first, then DMA), `mc_PrinterInit.cpp`, `printerPlatformInit()` for the MC including BRR from `apb1Frequency_Hz` / `apb2Frequency_Hz` with host-checked values (36 MHz/115200 → 313, 36 MHz/230400 → 156, 72 MHz/115200 → 625), a real-CMSIS build, and GPIO AF per §13.6.
 3. **File markers plan,** once §13.2, §13.16 and §13.17 are decided.
