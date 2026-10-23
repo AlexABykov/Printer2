@@ -103,7 +103,7 @@ file0.close();                  // flushes and emits END marker
 - **PC:** `open()` opens `std::ofstream(name)` (append; `ClearFile` truncates). `close()` flushes and releases.
 - **MC:** `open()` emits a BEGIN marker on the backing USART; `close()` emits an END marker. Bytes between markers are plain text. No actual file is created on the MC — the markers delimit text on the USART so a PC-side capture can be split back into files.
 - **Marker text is identical on both platforms** (§13.2). A single splitter parses either platform's captured byte stream and produces the same `{name → content}` map.
-- **Shutdown:** on program termination, all still-open `fileN` emit their END marker (§13.3).
+- **Shutdown:** Closing is command-driven, not process-exit-driven. A stop recording file command (emitted by the Task Manager or the Recorder) closes the named file: on PC it flushes and releases the std::ofstream; on MC it emits the END marker on the backing USART. There is no atexit-style shutdown hook — the Printer module does not own program termination.
 
 ## 9. Configuration files
 
@@ -162,7 +162,7 @@ Declared in common, **defined per platform** (`printerInit_mc.cpp` / `printerIni
     - *Proposal:* `=== BEGIN <name> ===` / `=== END <name> ===`, where `<name>` is exactly `fileN.name`. On MC, markers go to the backing USART. On PC, the same markers are written **into the file itself** so a splitter sees identical bytes on both platforms.
     - *Trigger question, restated concretely:* if `file0.name = "run.csv"` and then `file0.close()` is called **without any bytes written**, should the output still contain `=== BEGIN run.csv ===` + `=== END run.csv ===` (empty file, markers present), or nothing at all (file never opened)? My proposal: markers are emitted at `open()` (or first assignment + first use), so an empty file still yields a marker pair. Confirm, or specify "markers only on first byte".
     - *Sub-question:* does the PC file contain the markers, or are they stripped before writing? (Proposal: kept, for platform parity.)
-3. **Shutdown marker** — confirmed: emit END markers for still-open files on program termination. Need to decide *how* shutdown is detected on MC (atexit is unavailable/risky on bare metal; probably an explicit `printerDeinit()` called by the host boot layer).
+3. **Shutdown marker** — Shutdown marker — resolved: command-driven. A stop recording file command from the Task Manager / Recorder closes the file (flush on PC, END marker on MC). The Printer module itself has no printerDeinit() / atexit responsibility. Sub-item to confirm at implementation time: if the program crashes or is reset before the stop command runs, the MC capture will end without a footer — acceptable by design (a truncated marker pair flags an abnormal end to the splitter), or should the splitter treat a missing END marker as "file ran to end of capture"? Proposal: missing END = truncated / abnormal; splitter records it in its report.
 4. **printf signature** — confirmed: `stream.printf(fmt, ...)` (Option B).
 5. **Naming convention** — confirmed: types `FooBar`, instances `fooBar`, macros UPPERCASE. Glossary migration applied: `STR_LOG` → `streamLog`, `STR_MSG` → `streamMessage`, `STR_ERR` → `streamError`.
 6. **GPIO AF setup** — owned by `Hardware/` (Printer) or by the host MC boot layer? Still open.
