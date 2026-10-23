@@ -1,175 +1,235 @@
 # Request: implement Printer Configuration  settings
 **Date:** 2026‑10‑23  
-**Status:** Draft (REMEMBER: only BY can change the Status)
+**Status:** Discussion (REMEMBER: only BY can change the Status)
 
 ## Proposal
-Let's start with 3 configurations files: 
+Let's start with 3 configurations files:
 1. Common `config.h`
-2. MC specific `config_mc.h` 
+2. MC specific `config_mc.h`
 3. PC-specific `config_pc.h`
 
-## Decisions
-
-1. **`prt1` stays** as the single global printer. Only the **keyword target names** change (`usart2`/`usart3`/`file` → new logical stream names). Old-project call sites will be fixed by hand/IDE rename.
-2. **`STR_LOG`, `STR_MSG`, `STR_ERR` are not separate `Printer` instances** — they are the new targets, i.e. what old `usart2`/`usart3` were.
-3. **`BaseUsart` → `BaseStream`, `pUsart` → `pStream`.** Same role, renamed.
-4. **New system, incompatible with old.** Transport, buffer sizing, parity, color routing — all free to redesign. Old code is only a source of algorithms.
-
-## Consequence: what the draft examples actually describe
-
-With those decisions the draft implies two layers of objects:
-
-- **Physical transports** (`BaseStream` subclasses): real byte sinks. On MC these are the USARTs and the file-alias; on PC they are console endpoints and file endpoints.
-- **Logical streams** (`STR_LOG`, `STR_MSG`, `STR_ERR`): what `prt1 << ...` selects. Each has a `pStream` pointing at a physical transport, plus a `color` (no-op on MC).
-
-That matches `STR_LOG.pStream = USART2.pStream;` — except the draft has `USART2` itself exposing `.pStream`, which only makes sense if `USART2` is *also* a logical stream (a physical-facing one with `.settings`). I'd rather not have that third concept. Below is a cleaner version of the same idea.
-
-## Proposed object model
+### Common
 
 ```cpp
-// Common/Printer/BaseStream.h
-class BaseStream {
-public:
-    virtual void sendByte(uint8_t b) = 0;
-    virtual void flush() = 0;
-    virtual ~BaseStream() = default;
-};
+// Baud Rate
+USART2.settings.baudrate = 115200;
+USART3.settings.buffer = 2048; // Set buffer to zero to turn off DMA
+USART3.settings.baudrate = 230400; // USART3 buffer is zero by default - no DMA.
+...
 
-// Common/Printer/Stream.h  — logical target, what the keywords are
-struct Color { uint8_t r, g, b; };
-
-struct Stream : BaseStream {
-    BaseStream* pStream = nullptr;   // physical transport
-    Color       color{};
-    bool        hasColor = false;    // false on MC
-    void sendByte(uint8_t b) override;   // applies color on PC, forwards
-    void flush() override { if (pStream) pStream->flush(); }
-};
-
-// Common/Printer/Printer.h
-class Printer {
-    BaseStream*       pStream;       // currently &STR_xxx
-    BasePrintNumber*  pPrintNumber;
-public:
-    Printer& operator<<(const Stream& s) { pStream = const_cast<Stream*>(&s); return *this; }
-    // ... existing operators unchanged
-};
-
-extern Printer prt1;
-extern Stream STR_LOG, STR_MSG, STR_ERR;
+// Parity, Stop bits etc.
+// ...
 ```
 
-MC side:
+### MC
 
 ```cpp
-// config_mc.h
-struct UartSettings { uint32_t baudrate; uint32_t buffer; uint8_t dataBits, parity, stopBits; };
+// STM32F103VET6 (example)
+// Registers pointers assignment to real registers (including GPIO)
+// TODO: implement more platforms
+...
 
-class UsartStream : public BaseStream {
-public:
-    UartSettings settings;
-    void sendByte(uint8_t) override;
-    void flush() override;
-};
+// WARNING! No colored prints on MC
 
-extern UsartStream mcUsart2, mcUsart3;   // physical (note: NOT named USART2)
+// Streams assignments (example)
+streamLog.pStream = USART2.pStream;
+streamMessage.pStream = USART2.pStream;
+streamError.pStream = USART3.pStream;
+// No color support for the whole MC platform
 ```
+
+### PC
 
 ```cpp
-// PrinterConfig_mc.cpp
-void printer_init() {
-    mcUsart2.settings = { 115200, 2048, 8, 0, 1 };
-    mcUsart3.settings = { 230400,    0, 8, 0, 1 };   // buffer==0 → polled, no DMA
+// STM32F103VET6 (example)
+// Registers pointers assignment to static variables (including GPIO)
+// TODO: implement more registers
 
-    STR_LOG.pStream = &mcUsart2;   // no color on MC
-    STR_MSG.pStream = &mcUsart2;
-    STR_ERR.pStream = &mcUsart3;
+// WARNING! No colored prints in files
 
-    mcUsart2.init(); mcUsart3.init();   // programs USART + DMA from settings
-}
+// Streams assignments (example)
+streamLog = pcOut.console_0;
+streamMessage = pcOut.console_0;
+streamError = pcOut.file_1;
+...
+
+// Colors
+STR_LOG.color = darkGray;
+STR_MSG.color = darkGreen;
+...
 ```
 
-PC side:
+---
+
+# Printer Specification (Draft)
+**Status:** Draft (companion to the request above; to be promoted to its own `Printer Specification.md` once the request is accepted)  
+**Date:** 2026‑10‑23
+
+> The examples in the request above are illustrative and predate the decisions below. Where they differ, **this specification is authoritative**.
+
+## 1. Scope
+
+The new `Printer` module is a **standalone, portable** subsystem, intentionally incompatible with the old project's `Printer`. The old code is a source of algorithms only; call sites will be migrated by hand. Design goals:
+
+- Same public `operator<<` streaming model, no dynamic allocation.
+- Single global `prt1`; all targets are keywords.
+- Buffering and colour are core algorithm choices, not afterthoughts.
+- Platform-specific code (USART/DMA/GPIO, console, real files) is isolated from common logic.
+
+## 2. Naming conventions
+
+- **Types/classes:** `PascalCase` — `BaseStream`, `Stream`, `FileStream`, `UsartStream`, `ConsoleStream`, `Printer`, `Color`, `UartSettings`.
+- **Instances, members, functions, `constexpr` values:** `camelCase` — `prt1`, `streamLog`, `streamMessage`, `streamError`, `file0` … `file8`, `pStream`, `pInner`, `hasColor`, `printerInit`, `printHexPrefix`, `platformHasColor`.
+- **Preprocessor macros** (only when a macro is genuinely required): `SCREAMING_SNAKE_CASE` — e.g. `PLATFORM_HAS_COLOR` if a `#if` switch is needed. Preferred form is `constexpr bool` so that `#if` is avoided; if a macro is used, it is UPPERCASE.
+- **Hardware register names** from CMSIS (`USART2`, `DMA1_Channel7`, `GPIOA`, `RCC`) are never renamed. Register macros collide with `USART2`-style names — the `UsartStream` instances are `mcUsart2` / `mcUsart3`, never `USART2`.
+
+## 3. Object model
+
+```
+BaseStream  (abstract sink)
+ ├─ UsartStream     MC: raw bytes to a USART (DMA or polled)
+ ├─ ConsoleStream   PC: raw bytes to std::cout
+ ├─ FileStream      PC: raw bytes to std::ofstream
+ │                  MC: markers + raw bytes to a UsartStream
+ └─ Stream          logical sink: lazy colour, forwards to an inner BaseStream
+```
+
+- `Printer::pStream` is `BaseStream*`. Both `Stream` (with colour) and `FileStream` (without) are accepted by `operator<<`.
+- `Stream` owns the colour logic. It wraps a `BaseStream* pInner`. `Stream::sendByteRaw(b)` emits an ANSI colour sequence on transition, then forwards `b` to `pInner`. Colour is skipped entirely when `pInner->allowsAnsi() == false`.
+- `FileStream` is a `BaseStream` in its own right. It never carries colour. On MC it forwards text to a `UsartStream*` and emits begin/end markers; on PC it writes to a `std::ofstream`.
+- `prt1.error(fmt, ...)` is **removed** as a special method. Errors are written with the ordinary stream syntax against `streamError` (e.g. `prt1 << streamError << "..." << endLine`). printf-style output is a general capability (§6).
+
+## 4. Target keywords
+
+| Keyword | Type | Role |
+|---|---|---|
+| `streamLog` | `Stream` | General log |
+| `streamMessage` | `Stream` | Message / production link |
+| `streamError` | `Stream` | Errors |
+| `file0` … `file8` | `FileStream` | Nine named file sinks (extensible later) |
+
+- All are globals with static storage duration. `streamLog` / `streamMessage` / `streamError` / `fileN` are defined in common code; platform translation units bind their inner sinks via `printerInit()`.
+- `prt1 << streamLog` sets `pStream = &streamLog` and leaves it there until the next switch. Same for `fileN`.
+- **Stream name is a unique type of operator:** each target is a distinct global object, so overload resolution distinguishes it from `const char*`/integers without a tag type. Aliases are trivial (one more global of the same type).
+- `KeyWords::File{"name"}` / `ClearFile{"name"}` are **kept but must be refactored** under the new `file0..file8` model (§13.1). The simple field form is `fileN.name = "path"`; the method form is `fileN.open("path")` (§8).
+- **`StreamGuard` and `hold` are both provided.** `StreamGuard` is the RAII scope for multi-line switches; `hold` is the chain-local keyword released by `endLine` (§5, §13.8).
+
+## 5. Color (lazy)
+
+- **Emission is lazy:** on the first byte after a target switch, `Stream::sendByteRaw` emits the active colour; on `endLine` the printer calls `pStream->resetColor()`, which emits `ESC[0m` if a colour was active and marks the stream idle.
+- **Mid-line switch:** `prt1 << streamLog << "a" << streamError << "b" << endLine` calls `resetColor()` on the outgoing stream before re-pointing `pStream`, so no escape ever leaks across a switch. Then `streamError` emits its own colour before `"b"`.
+- **`flushDma` never alters colour state.** The operator flushes the DMA unconditionally, wherever it appears. The terminal's colour is unaffected by a flush, so the next byte must **not** re-emit the colour. Only `endLine` (and a mid-line target switch) resets colour.
+- **Files never colour:** `Stream` skips colour when `pInner->allowsAnsi() == false`. `fileN` are `FileStream` instances, not `Stream` wrappers, so they never see colour at all. This enforces "no coloured prints in files" structurally, not by convention.
+- **MC never colour:** in `config_mc.h`, `platformHasColor = false`; every `Stream` is bound to a `UsartStream` whose `allowsAnsi()` is `false`. The colour path compiles out and costs nothing at runtime.
+- `resetColor()` and `sendByteRaw()` are virtual on `BaseStream` (no-op default); only `Stream` overrides them meaningfully.
+
+## 6. printf-style output
+
+Confirmed signature — **method on the stream** (Option B):
 
 ```cpp
-// config_pc.h
-class ConsoleStream : public BaseStream { public: void sendByte(uint8_t) override; void flush() override; };
-class FileStream    : public BaseStream { public: void sendByte(uint8_t) override; void flush() override;
-                                          bool open(const char* path, bool truncate=false); };
-
-namespace pcOut {
-    extern ConsoleStream console_0;
-    extern FileStream    file_0, file_1;
-}
+streamError.printf("mask %d out of range", badMask);
+file0.printf("t,pos\n");
+streamLog.printf("frame %u received", n);
 ```
+
+- A free-function format engine (`printFormatted(BaseStream&, const char*, va_list)`) does the work; `BaseStream::printf` forwards to it. Both `Stream` and `FileStream` expose it uniformly.
+- Formatting: `%d %i %u %x %X %f %s %c %p %%`, `l`/`ll` length modifiers. `%f` precision still ignored in v1.
+- No auto-newline and no automatic target — callers write `<< endLine` explicitly. The old "auto-newline on error" convenience is gone.
+- `prt1.error(fmt, ...)` is removed; replaced by `streamError.printf(...)` or by stream-style writes to `streamError`.
+
+## 7. Buffering (MC)
+
+Buffering is a core algorithm: **two buffers or no buffering**. No intermediate strategies.
+
+- `UartSettings::buffer == 0` → **polled** transmission (wait for TXE, write `DR`). No DMA, no RAM cost.
+- `UartSettings::buffer > 0` → **double-buffered DMA**: two banks of `buffer / 2` bytes. DMA drains the active bank; CPU writes into the inactive bank. On bank-full: wait up to the backpressure budget for DMA completion; if free, swap banks and start transmission of the full bank; if still busy, drop the byte (backpressure by loss, same philosophy as the old module, but the budget is computed from `buffer`).
+- `buffer` must be even (`static_assert`).
+- A compile-time bound (`printerMaxDmaBuffer`) guards static allocation of the bank arrays. Values above it are a build error.
+- The old `update_UsartX()` (non-blocking kick-out of a partially filled bank) is retained.
+
+## 8. File naming
+
+Each `fileN` has a public `const char* name` field, and matching open/close methods:
 
 ```cpp
-// PrinterConfig_pc.cpp
-void printer_init() {
-    STR_LOG.pStream = &pcOut.console_0; STR_LOG.color = { 64, 64, 64}; STR_LOG.hasColor = true;
-    STR_MSG.pStream = &pcOut.console_0; STR_MSG.color = {  0,128,  0}; STR_MSG.hasColor = true;
-    STR_ERR.pStream = &pcOut.file_1;    STR_ERR.color = {200,  0,  0}; STR_ERR.hasColor = true;
-}
+file0.name = "logs/run1.csv";   // simple field assignment
+prt1 << file0 << "t,pos,vel" << endLine;
+
+file0.open("logs/run1.csv");    // assigns name and emits BEGIN marker
+prt1 << file0 << "t,pos,vel" << endLine;
+file0.close();                  // flushes and emits END marker
 ```
 
-## Issues in the draft to fix before implementation
+- Assignment is legal only before first write or after `close()`.
+- **Default name if unset:** `"noname.log"` on both platforms.
+- **PC:** `open()` opens `std::ofstream(name)` (append; `ClearFile` truncates). `close()` flushes and releases.
+- **MC:** `open()` emits a BEGIN marker on the backing USART; `close()` emits an END marker. Bytes between markers are plain text. No actual file is created on the MC — the markers delimit text on the USART so a PC-side capture can be split back into files.
+- **Marker text is identical on both platforms** (§13.2). A single splitter parses either platform's captured byte stream and produces the same `{name → content}` map.
+- **Shutdown:** on program termination, all still-open `fileN` emit their END marker (§13.3).
 
-1. **`USART2` / `USART3` collide with the CMSIS register macros.** In the old project `USART2` is `((USART_TypeDef*)USART2_BASE)`. `USART2.settings.baudrate` cannot compile there. Use `mcUsart2` / `mcUsart3` (or similar).
+## 9. Configuration files
 
-2. **File-scope assignments are not valid C++.** `USART2.settings.baudrate = 115200;`, `STR_LOG.pStream = ...` cannot appear at namespace scope. All of this must live in `printer_init()` (or a constructor of a config struct instantiated once). The draft should show the mechanism.
+Three data-only headers + one binding entry point. **No assignments at namespace scope** — all configuration is `constexpr` data consumed by `printerInit()`.
 
-3. **Duplicate `STR_LOG` and missing `STR_ERR` in the MC example** — typo in the draft.
+### `config.h` — common
+- `constexpr` feature flags: `printHexPrefix`, `doubleScientific`, `doublePlusInExponent`, `useColorDefault`.
+- Common types: `Color { r, g, b }`, `UartSettings { baudrate, buffer, dataBits, parity, stopBits }`.
+- Default `UartSettings` constants used by both platforms as defaults.
+- No references to platform object names (`USART2`, `console0`, …).
 
-4. **Contradictory USART3 buffer comments** — `buffer = 2048` plus “buffer is zero by default”. Decide: does the standalone module default to DMA on or off for USART3?
+### `config_mc.h` — STM32F103 (example)
+- `constexpr` register addresses, DMA channel numbers, `cpuTargetFrequency_MHz`.
+- `constexpr bool platformHasColor = false`.
+- Role → physical `UsartStream` mapping (which `mcUsartN` each `Stream` wraps).
+- `fileN` → backing `UsartStream` mapping (presumably the same as `streamError` — §13.2).
+- `UartSettings` constants per USART (baudrate, buffer size, parity, stop bits).
 
-5. **`config.h` cannot reference platform objects.** If `config.h` is truly common, `USART2.settings...` must move to `config_mc.h`. Common should only hold types, defaults, and feature flags (`PRINT_HEX_PREFIX`, `DOUBLE_SCIENTIFIC`, default baud/parity/stop).
+### `config_pc.h` — PC
+- `constexpr` role → `ConsoleStream` / `FileStream` mapping.
+- Per-`Stream` `Color` values.
+- `constexpr bool platformHasColor = true`.
+- File default paths.
 
-6. **PC section is titled “STM32F103VET6 (example)”** — copy/paste.
+### `printerInit()` — binding
+Declared in common, **defined per platform** (`printerInit_mc.cpp` / `printerInit_pc.cpp`), selected by the CMake configuration. Responsibilities:
 
-7. **`color` must exist on MC too** so that `STR_LOG.color = ...` in shared code compiles. Either keep `Color` in common and gate behavior with `PLATFORM_HAS_COLOR`, or make `hasColor` the only PC-specific thing.
+1. Bind `streamLog.pInner`, `streamMessage.pInner`, `streamError.pInner` and their colours from the config.
+2. Bind each `fileN` to its backing USART (MC) or set default names (PC).
+3. On MC, call `hardwareInit()` (§10) to program USART + DMA + GPIO from the config.
 
-8. **“PC register pointers to static variables”** — I don't think the standalone Printer needs this. The Printer only needs byte sinks. Register mocking is a concern of the host project's PC simulation layer. If you do want it in scope, say so; otherwise drop it from `config_pc.h`.
+## 10. Hardware directory (MC)
 
-9. **“No colored prints in files.”** Make it an invariant enforced by the `FileStream` sink (raw bytes only), with ANSI wrapping applied only by `Stream::sendByte` when `hasColor`. Then `STR_ERR` can map to a file and still be safe.
+- `Hardware/` holds `hardwareInit()` and the platform-specific `UsartStream` implementation (USART CR/BRR programming, DMA channel setup, optional GPIO alternate-function setup).
+- **Clock configuration is not part of the Printer module.** A future standalone MC boot layer owns RCC/PLL; the Printer receives the resulting CPU frequency via a global (`cpuTargetFrequency_MHz`) and uses it only for the DMA backpressure budget.
+- GPIO AF setup ownership (Printer vs host) is TBD (§13.6).
+- On PC, `Hardware/` is empty or absent; CMake links only the PC translation units.
 
-## Remaining open questions
+## 11. Build system
 
-1. **What replaces the `file` keyword?** Old `prt1 << file` selected the log file. Under the new model, file is a physical sink that some `STR_*` points at. Options:
-    - drop the keyword entirely (`STR_ERR`/`STR_LOG` is all you get), or
-    - add a fourth logical stream `STR_FILE` mapped to `pcOut.file_0` on PC and to `mcUsart3` on MC.
+- CMake, one configuration per platform (MC / PC), chosen at configure time — same approach as the old project.
+- `mc_*` / `pc_*` translation units are selected per configuration; polymorphism is link-time (abstract `BaseStream` in common, concrete implementations in `mc_` or `pc_` files).
+- Exact target layout is deferred; the old project's scheme will be reused. Requirement: `Printer` is a self-contained CMake target that links into a new project without pulling in the old `Common/` tree.
 
-2. **Dynamic file naming (the Recorder/CSV case).** Old `KeyWords::File{"run1.csv"}` and `StreamGuard + File::openOutput`. Under the new model, what is the equivalent? Candidate APIs:
-    - `STR_LOG.openFile("run1.csv");` — `Stream` method that forwards to the inner `FileStream` (valid only if the inner sink is a file).
-    - A local `Stream`:
-      ```cpp
-      Stream run;  run.pStream = &pcOut.file_0;  pcOut.file_0.open("run1.csv");
-      prt1 << run << "row" << endLine;
-      ```
-    - Keep the temporary-keyword trick: `prt1 << KeyWords::File{"run1.csv"}` where `operator<<` returns a `StreamGuard`-like scope. This is the old behavior, and since old code is not expected to work you can redesign freely — but you still need *some* answer for “switch the file for this call/scope”. I recommend a plain method on the logical stream + a `StreamGuard` that saves/restores `pStream`.
+## 12. Testing
 
-3. **`error()` semantics.** Old `error()` routed to USART3. Under the new model it should route to `STR_ERR` (temporarily). Confirm — and confirm that `error()` restores the previous `pStream` (it should, same as old).
+- Tests target the new API only. The old `set_sendByte_*_override` hooks are **not** carried over; the new project will have a different test fracture.
+- Recommended hook: a `CaptureStream : BaseStream` that records raw bytes, installed by tests either as a `pInner` on a `Stream` or directly as `prt1.pStream`. No test hook lives inside production `UsartStream` / `ConsoleStream`.
+- Exact framework and file layout TBD (follow the new project's conventions).
 
-4. **Test overrides.** Old hooks were per hardware target (`set_sendByte_Usart2_override`). New tests care about roles, not hardware. Options:
-    - per physical stream: `set_sendByte(mcUsart2, fn)` / `set_sendByte(pcOut.console_0, fn)`,
-    - per logical stream: `STR_LOG.override(fn)` (installed on `Stream`, catches everything routed through it regardless of transport),
-    - one global capture sink: `prt1.setCaptureSink(fn)`.
-      I'd recommend **per logical stream**, because it survives a physical re-mapping in config.
+## 13. Open items
 
-5. **Buffer semantics.** Old banks were a hard-coded 32 bytes × 2. The new config suggests configurable size. Proposed contract:
-    - `buffer == 0` → polled (no DMA).
-    - `buffer > 0` → double-buffered DMA, two banks of `buffer/2`.
-    - An upper bound `PRINTER_MAX_DMA_BUFFER` (compile-time) to avoid dynamic allocation. Values above it → static_assert or clamp.
-      Is that acceptable, or do you want a single monolithic buffer with a separate drain?
-
-6. **Ownership of USART/DMA/GPIO init.** In the huge project this lived outside the Printer. For a standalone module, `printer_init()` must program USART CRs, DMA channel config, and GPIO from the config. That is new code, not a port — worth acknowledging as a real work item. Does the module also own clock enable (RCC), or does the host provide it?
-
-7. **`BasePrintNumber`** (dec/hex, float/double paths) is unchanged by the config request — confirm.
-
-8. **Platform selection mechanism** for MC (`config_mc_stm32f103.h` + a forwarding `config_mc.h` chosen by a build macro, versus one editable `config_mc.h`). Pick one now so the file layout doesn't have to change later.
-
-9. **`Stream`-level color emission details.** If `STR_LOG` and `STR_MSG` share `pcOut.console_0` and each carries its own color, `Stream::sendByte` must emit ANSI state. Two viable policies:
-    - per byte (simple, matches old behavior, verbose),
-    - lazy: emit `ESC[38;5;…m` on the first byte after a target switch and a reset on `endLine`.
-      The second is cheaper and produces clean log files. Worth deciding now because it affects the `sendByte` signature and whether `Printer` or `Stream` tracks “last color emitted”.
-
-If you confirm (or revise) points 1–9, I can turn this into the actual `config.h` / `config_mc.h` / `config_pc.h` files plus the `printer_init()` scaffold, with the physical-stream and logical-stream definitions already in place.
+1. **`KeyWords::File{"name"}` / `ClearFile{"name"}` refactoring.** Decided: the form needs refactoring. Proposal to confirm: drop the constructor form entirely and rely on `fileN.name = "..."` and `fileN.open("...")` / `fileN.close()`. The constructor form was only a way to redirect the single old `file` target; with nine explicit `fileN` keywords it is redundant.
+2. **Marker text and trigger point — restated.**
+   - *Requirement:* the marker string is identical on MC and PC, so one splitter produces the same `{name → content}` map from either platform's captured bytes. (Confirmed by "parsed string equal for both platforms".)
+   - *Proposal:* `=== BEGIN <name> ===` / `=== END <name> ===`, where `<name>` is exactly `fileN.name`. On MC, markers go to the backing USART. On PC, the same markers are written **into the file itself** so a splitter sees identical bytes on both platforms.
+   - *Trigger question, restated concretely:* if `file0.name = "run.csv"` and then `file0.close()` is called **without any bytes written**, should the output still contain `=== BEGIN run.csv ===` + `=== END run.csv ===` (empty file, markers present), or nothing at all (file never opened)? My proposal: markers are emitted at `open()` (or first assignment + first use), so an empty file still yields a marker pair. Confirm, or specify "markers only on first byte".
+   - *Sub-question:* does the PC file contain the markers, or are they stripped before writing? (Proposal: kept, for platform parity.)
+3. **Shutdown marker** — confirmed: emit END markers for still-open files on program termination. Need to decide *how* shutdown is detected on MC (atexit is unavailable/risky on bare metal; probably an explicit `printerDeinit()` called by the host boot layer).
+4. **printf signature** — confirmed: `stream.printf(fmt, ...)` (Option B).
+5. **Naming convention** — confirmed: types `FooBar`, instances `fooBar`, macros UPPERCASE. Glossary migration applied: `STR_LOG` → `streamLog`, `STR_MSG` → `streamMessage`, `STR_ERR` → `streamError`.
+6. **GPIO AF setup** — owned by `Hardware/` (Printer) or by the host MC boot layer? Still open.
+7. **Default `fileN.name`** — confirmed: `"noname.log"` on MC (and on PC for consistency).
+8. **`StreamGuard` vs `hold`** — confirmed: **both**. `StreamGuard` is RAII for multi-line scopes; `hold` is a keyword that saves `pStream` into a single slot and is released by `endLine` (single level, no nesting). Interaction with `flushDma` and `printf`: only `endLine` releases a hold. `StreamGuard` construction on top of an active hold is allowed and is scoped independently.
+9. **`flushDma`** — confirmed: the operator flushes DMA unconditionally, wherever it appears. Colour state is **not** changed by a flush (terminal retains colour; next byte does not re-emit).
+10. **Glossary migration** — confirmed and applied throughout this draft (`streamLog` / `streamMessage` / `streamError`; `file0..file8`; `BaseStream`; `pStream`; `mcUsartN`).
