@@ -1,6 +1,6 @@
 # Printer Configuration Specification (Draft)
 **Status:** Draft. Companion to [`Config Request.md`](Config%20Request.md) in this folder.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review)
+**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review; 2026‑10‑24: Hardware, chip files, MC boot; CPU boot out of scope)
 
 > The examples in `Config Request.md` are illustrative and predate the decisions below. Where they differ, **this specification is authoritative**.
 >
@@ -22,6 +22,7 @@ The new `Printer` module is a **standalone, portable** subsystem, intentionally 
 - **Unit-suffix exception:** a `constexpr` holding a physical quantity may end in `_Unit` — `cpuFrequency_MHz`, `apb1Frequency_Hz`, `apb2Frequency_Hz`. The suffix keeps the unit visible at every use site (§13.14).
 - **Configuration constants** live inside `namespace cfg`. The namespace is `cfg`, not `Config`.
 - **Preprocessor macros** (only when a macro is genuinely required): `SCREAMING_SNAKE_CASE` — e.g. `PLATFORM_HAS_COLOR` if a `#if` switch is needed. Preferred form is `constexpr bool` so `#if` is avoided; if a macro is used, it is UPPERCASE.
+- **Chip files** are named after the CMSIS device define, with a platform prefix: `mc_STM32F103xE.h`, `pc_STM32F103xE.h`, and the shared layout `STM32F103xE_regs.h` (§10). The device define names the register map, which a whole family shares; the full part number (`STM32F103VET6`) adds only package and flash size.
 - **Hardware register names** from CMSIS (`USART2`, `DMA1_Channel7`, `GPIOA`, `RCC`) are never renamed. Register macros collide with `USART2`-style names — the `UsartStream` instances are `mcUsart2` / `mcUsart3`, never `USART2`.
 
 ## 3. Object model
@@ -184,37 +185,39 @@ constexpr const char* defaultFileName     = "noname.log";  // §8, both platform
 ```
 
 ### `config_mc.h` — STM32F103 (example)
+- **Choices only, no silicon facts.** Register addresses, DMA channel mapping, pin tables and clock limits are facts about the chip, and they live in the chip headers in `Hardware/` (§10). `config_mc.h` therefore includes no CMSIS header and compiles on any host.
 - `constexpr bool platformHasColor = false`.
-- Clock inputs from the boot layer (§10): `cpuFrequency_MHz` for the DMA backpressure budget **only**; `apb1Frequency_Hz` (USART2, USART3) and `apb2Frequency_Hz` (USART1) for BRR. On an F103 at 72 MHz, APB1 runs at 36 MHz, so computing BRR from the CPU clock would double every baud rate.
-- **Peripheral base addresses as integers**, not CMSIS pointers. `USART2` expands to `((USART_TypeDef*)USART2_BASE)`, and a `reinterpret_cast` is not allowed in a constant expression, so `constexpr USART_TypeDef* p = USART2;` does not compile. The config stores `constexpr uintptr_t usart2Base = USART2_BASE;`, and `Hardware/` casts it at runtime.
-- DMA channel numbers (F103: USART2_TX = DMA1 channel 7, USART3_TX = DMA1 channel 2).
+- **Clocks — the clock in effect, not a clock the Printer sets (§10, §13.23).** The Printer does not boot the CPU. `hseFrequency_Hz` records the board crystal for an optional CPU boot. The PLL and divider values are part of that CPU boot, so they are commented out here. `sysclkFrequency_Hz` is the clock running when `prt1.boot()` is called: without a CPU boot, an F103 runs on HSI = 8 MHz with all dividers at 1. The rest of the Printer uses frequencies **derived** from it: `cpuFrequency_MHz` for the DMA backpressure budget **only**, and `apb1Frequency_Hz` (USART2, USART3) / `apb2Frequency_Hz` (USART1) for BRR. Once a CPU boot runs the F103 at 72 MHz, APB1 runs at 36 MHz, so computing BRR from the CPU clock would double every baud rate. The chip header `static_assert`s these values against the silicon limits. Keeping them in step with a CPU boot is §13.27.
+- GPIO remap choice per USART (`usart2Remap`, `usart3Remap`). The pins each remap selects come from the chip header.
 - `usart2Settings` / `usart3Settings`. Per the request, USART3's `bufferSize` is **zero by default**, so it is polled with no DMA.
 - Role → physical `UsartStream` mapping (`streamLogTarget`, `streamMessageTarget`, `streamErrorTarget`, `fileBackingUsart`), expressed as an enum that `printerInit()` resolves, so this header does not need the `UsartStream` declarations (§13.20).
-- GPIO AF pin constants, pending §13.6.
-- Declares `void printerPlatformInit();`
 
 ```cpp
 #pragma once
-#include "config.h"
-#include "stm32f1xx.h"   // CMSIS: only the *_BASE integer macros are used here
+#include "config.h"   // no CMSIS: silicon facts live in Hardware/mc_<chip>.h (§10)
 
 namespace cfg {
 
 constexpr bool platformHasColor = false;
 
-constexpr uint32_t cpuFrequency_MHz = 72;           // backpressure budget only
-constexpr uint32_t apb1Frequency_Hz = 36'000'000;   // USART2, USART3 BRR
-constexpr uint32_t apb2Frequency_Hz = 72'000'000;   // USART1 BRR
+// Clocks. The Printer does not boot the CPU (§10, §13.23); it runs on the clock in effect.
+constexpr uint32_t hseFrequency_Hz = 8'000'000;   // board crystal, used by an optional CPU boot
 
-constexpr uintptr_t usart2Base = USART2_BASE;       // cast in Hardware/
-constexpr uintptr_t usart3Base = USART3_BASE;
-constexpr uintptr_t dma1Base   = DMA1_BASE;
-constexpr uint8_t   usart2TxDmaChannel = 7;
-constexpr uint8_t   usart3TxDmaChannel = 2;
+// Optional CPU boot, not part of the Printer:
+// constexpr uint32_t pllMultiplier = 9;          // SYSCLK = HSE x 9 = 72 MHz
+// constexpr uint32_t ahbDivider    = 1;
+// constexpr uint32_t apb1Divider   = 2;          // APB1 = 36 MHz
+// constexpr uint32_t apb2Divider   = 1;
 
-// GPIO AF (pending §13.6)
-constexpr uintptr_t usart2TxPortBase = GPIOA_BASE;  constexpr uint8_t usart2TxPin = 2;   // PA2
-constexpr uintptr_t usart3TxPortBase = GPIOB_BASE;  constexpr uint8_t usart3TxPin = 10;  // PB10
+// Clock in effect at prt1.boot(). Without a CPU boot: HSI = 8 MHz, all dividers 1 (§13.27).
+constexpr uint32_t sysclkFrequency_Hz = 8'000'000;                      // HSI after reset
+constexpr uint32_t cpuFrequency_MHz   = sysclkFrequency_Hz / 1'000'000;  // backpressure budget only
+constexpr uint32_t apb1Frequency_Hz   = sysclkFrequency_Hz;              // USART2, USART3 BRR
+constexpr uint32_t apb2Frequency_Hz   = sysclkFrequency_Hz;              // USART1 BRR
+
+enum class UsartRemap : uint8_t { none, partial, full };   // pins per remap: chip header
+constexpr UsartRemap usart2Remap = UsartRemap::none;       // F103: PA2/PA3
+constexpr UsartRemap usart3Remap = UsartRemap::none;       // F103: PB10/PB11
 
 constexpr UartSettings usart2Settings{115200, 2048, 8, Parity::none, StopBits::one, FlowControl::none};
 constexpr UartSettings usart3Settings{230400, 0,    8, Parity::none, StopBits::one, FlowControl::none};
@@ -227,16 +230,13 @@ constexpr McSink streamErrorTarget   = McSink::usart3;
 constexpr McSink fileBackingUsart    = McSink::usart3;
 
 } // namespace cfg
-
-void printerPlatformInit();
 ```
 
 ### `config_pc.h` — PC
-- `constexpr bool platformHasColor = true`. Colour still needs VT mode at runtime (see `printerInit()` step 3).
+- `constexpr bool platformHasColor = true`. Colour still needs VT mode at runtime (see the PC boot below).
 - Role → endpoint mapping. A role can target `console0` or a `fileN`; the request's example sends `streamError` to `file1`.
 - Per-`Stream` `Color` values, using the presets from `config.h`.
-- Declares `void printerPlatformInit();`
-- Not decided: whether the PC config also emulates the MC registers with static variables, as the request suggests (§13.21).
+- The emulated chip is chosen in `Hardware/pc_chip.h`, not here (§10, §13.24).
 
 ```cpp
 #pragma once
@@ -256,25 +256,44 @@ constexpr Color streamMessageColor = darkGreen;
 constexpr Color streamErrorColor   = brightRed;
 
 } // namespace cfg
-
-void printerPlatformInit();
 ```
 
-### `printerInit()` — binding
-Declared in common, **defined per platform** (`Hardware/mc_PrinterInit.cpp` / `Hardware/pc_PrinterInit.cpp`), selected by the CMake configuration. Until it runs, every stream writes to `nullSink` (§4). Responsibilities:
+### Boot and binding
+`Hardware/PrinterInit.h` declares two functions, each **defined per platform** in `Hardware/mc_PrinterInit.cpp` / `Hardware/pc_PrinterInit.cpp` and selected by the CMake configuration. The user calls one entry point, `prt1.boot()` (§13.25), which runs them in this order:
 
-1. Bind `streamLog.pInner`, `streamMessage.pInner`, `streamError.pInner` by resolving the role→target enums to objects (`McSink::usart2` → `&mcUsart2`, `PcSink::file1` → `&file1`, …). On PC, also set each stream's colour from the `cfg::*Color` constants.
-2. **MC:** point each `fileN`'s backing `UsartStream` at the object named by `cfg::fileBackingUsart`. **PC:** nothing to bind. `fileN` is already a `FileStream` and opens its own `std::ofstream` on `open()`.
-3. Call `printerPlatformInit()`:
-   - **MC:** programs USART CR1/CR2/CR3 from `UartSettings` (including RTS/CTS when `flowControl == rtsCts`). Programs BRR as `(apbN + baud / 2) / baud`, where `apbN` is `apb1Frequency_Hz` for USART2/3 and `apb2Frequency_Hz` for USART1. Programs the DMA channel when `bufferSize > 0`, and the GPIO AF (pending §13.6).
-   - **PC:** enables ANSI processing on the console: `GetConsoleMode` on `STD_OUTPUT_HANDLE`, then `SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)`. Windows 10 shows raw escape bytes without this. If either call fails (old Windows, output redirected to a file or pipe), `console0.allowsAnsi()` returns `false`, and colour is skipped by §5 precedence rule 3.
+1. **`printerPlatformInit()` — hardware boot.** It runs first, so no byte reaches an interface that is not yet running. The MC sequence is in §10.
+   - **PC:** enables ANSI processing on the console: `GetConsoleMode` on `STD_OUTPUT_HANDLE`, then `SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)`. Windows 10 shows raw escape bytes without this. If either call fails (old Windows, output redirected to a file or pipe), `console0.allowsAnsi()` returns `false`, and colour is skipped by §5 precedence rule 3. A mock of the MC boot may be added on PC if needed.
+2. **`printerInit()` — binding.**
+   - Bind `streamLog.pInner`, `streamMessage.pInner` and `streamError.pInner` by resolving the role→target enums to objects (`McSink::usart2` → `&mcUsart2`, `PcSink::file1` → `&file1`, …). On PC, also set each stream's colour from the `cfg::*Color` constants.
+   - **MC:** point each `fileN`'s backing `UsartStream` at the object named by `cfg::fileBackingUsart`. **PC:** nothing to bind. `fileN` is already a `FileStream` and opens its own `std::ofstream` on `open()`.
 
-## 10. Hardware directory (MC)
+Until `printerInit()` has run, every stream writes to `nullSink` (§4).
 
-- `Hardware/` holds `printerPlatformInit()` and the platform-specific `UsartStream` implementation (USART CR/BRR programming, DMA channel setup, GPIO alternate-function setup). It is the only place where the `cfg::*Base` integers are cast to CMSIS pointer types (`reinterpret_cast<USART_TypeDef*>(cfg::usart2Base)`).
-- **Clock configuration is not part of the Printer module.** A future standalone MC boot layer owns RCC/PLL. The Printer receives the resulting frequencies as constants: `cfg::cpuFrequency_MHz`, used only for the DMA backpressure budget, and `cfg::apb1Frequency_Hz` / `cfg::apb2Frequency_Hz`, used only for BRR.
-- GPIO AF setup ownership: **currently owned by `printerPlatformInit()`** in `Hardware/` (see §13.6 for whether to keep or hand off to the host boot layer).
-- On PC, `Hardware/` holds only `pc_PrinterInit.cpp` (binding and VT-mode setup). No register code is present unless §13.21 decides otherwise. CMake links only the PC translation units.
+## 10. Hardware directory
+
+`Hardware/` is part of the `printer` target on both platforms. It holds the boot, the binding, and everything that knows about a chip.
+
+| File | Platform | Content |
+|---|---|---|
+| `PrinterInit.h` | both | Declares `printerPlatformInit()` and `printerInit()` (§9) |
+| `mc_PrinterInit.cpp` | MC | Real boot sequence (below) and binding to `mcUsart2` / `mcUsart3` |
+| `pc_PrinterInit.cpp` | PC | Registers bound to static variables, VT-mode setup, PC-specific settings, binding to `console0` / `fileN` |
+| `mc_chip.h` / `pc_chip.h` | MC / PC | **Public, single chip-selection point.** Each holds one manually uncommented `#include` of a chip header. Every file that needs chip definitions (`*_PrinterInit.cpp`, `UsartStream<N>`, tests) includes `mc_chip.h` or `pc_chip.h`, never a chip header directly |
+| `STM32F103xE_regs.h` | both | Register **layout** only (`UsartRegs`, `DmaChannelRegs`, `GpioRegs`, `RccRegs`, …), platform-neutral. The vendor CMSIS header can't be used for this, because `core_cm3.h` contains inline assembly that does not compile on a PC. One layout per chip family keeps MC and PC from drifting apart |
+| `mc_STM32F103xE.h` | MC | Silicon facts: base addresses as `constexpr uintptr_t`, DMA channel mapping (USART2_TX = DMA1 channel 7, USART3_TX = DMA1 channel 2), pin tables per remap, the flash latency rule, and clock limits as `static_assert`s on `cfg::` (SYSCLK ≤ 72 MHz, APB1 ≤ 36 MHz, PLL multiplier 2–16). Accessors such as `usart2()` return `reinterpret_cast<UsartRegs*>(usart2Base)` at runtime, because a `reinterpret_cast` is not allowed in a constant expression |
+| `pc_STM32F103xE.h` | PC | The same accessors, returning pointers to static `volatile` register storage |
+
+- **Driver code is shared.** `UsartStream<N>` and the boot code reach registers only through the chip accessors. On the MC those point at the real addresses; on the PC they point at static storage. The same code therefore compiles and runs on both platforms.
+- **PC register model.** At minimum, the registers are static `volatile` variables that tests read and set. A more sophisticated model may replace them: register updates at the proper simulated time and simulated interrupts (for example, TXE setting after one byte time, or a DMA transfer-complete interrupt). Any driver path that waits on a flag needs such a model, because a static flag never changes by itself.
+- **PC-only chip headers are allowed.** A `pc_STM32F407xx.h` (with its `STM32F407xx_regs.h`) may exist without a matching `mc_` header when there is no plan to compile for that chip.
+- **MC boot sequence** (`printerPlatformInit()`, §13.23). The Printer boots **only the hardware it needs**, and it runs on whatever CPU clock is active:
+  1. **GPIO remapping,** if any `cfg::usartNRemap` is not `none`: enable the AFIO clock and set the remap bits.
+  2. **GPIO,** always: enable the clocks of the ports used by the active interfaces and configure their pins (TX as alternate-function push-pull, RX as input, and RTS/CTS when `flowControl == rtsCts`).
+  3. **Interfaces:** enable each USART's clock. Program CR1/CR2/CR3 from `UartSettings`, and program BRR as `(apbN + baud / 2) / baud`, where `apbN` is `apb1Frequency_Hz` for USART2/3 and `apb2Frequency_Hz` for USART1. SPI may follow later as another interface.
+  4. **DMA,** if any `bufferSize > 0`: enable the DMA1 clock and configure each TX channel.
+
+  Each step enables the RCC clock of a peripheral (an `RCC->APBxENR` / `AHBENR` bit) before it touches that peripheral's registers. Those enable bits are the only RCC registers the Printer writes.
+- **CPU boot is out of scope** (§13.23). The CPU boot covers starting HSE, flash latency, the PLL, the bus dividers and the SYSCLK switch. It may be implemented separately, but the Printer must start without it. After reset, an F103 runs on HSI at 8 MHz with all dividers at 1, so the Printer then works at that lower speed. A separate CPU boot must set the flash latency *before* raising SYSCLK (F103: 2 wait states above 48 MHz), and it must run **before** `prt1.boot()`, because BRR is computed from the clock in effect at boot time (§13.27).
 
 ## 11. Build system
 
@@ -303,6 +322,11 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.8 | **`StreamGuard` and `hold`: both.** `StreamGuard` is RAII for multi-line scopes. `hold` saves `pStream` into a single slot and is released by `endLine` (single level, no nesting). Only `endLine` releases a hold; `flushDma` and `printf` do not. A `StreamGuard` on top of an active hold is allowed and scoped independently. | Recorded as confirmed, 2026‑10‑23 |
 | 13.9 | **`flushDma`:** flushes DMA unconditionally, wherever it appears. Colour state is not changed; the next byte does not re-emit. | Recorded as confirmed, 2026‑10‑23 |
 | 13.10 | **Glossary migration** applied throughout (`streamLog` / `streamMessage` / `streamError`; `file0..file8`; `BaseStream`; `pStream`; `mcUsartN`). | Recorded as confirmed, 2026‑10‑23 |
+| 13.6 | **GPIO setup is owned by the Printer's MC boot** (§10 steps 1–2): remapping if needed, and always the GPIO used by the active interfaces. Pin tables live in the chip header; the remap choice lives in `config_mc.h`. | "if needed, boot and set GPIO Remapping, always boot GPIO needed by used interfaces", 2026‑10‑24 |
+| 13.21 | **PC emulates registers with static variables** through `pc_<chip>.h` (§10). At minimum, static `volatile` storage; a more sophisticated model with timed register updates and simulated interrupts may replace it. | "PC can use known sophisticated model with registers updates at proper simulated time and interrupts simulation. Static values like 'pointer to a volatile int32' static is OK", 2026‑10‑24 |
+| 13.23 | **The Printer boots only the hardware it needs; CPU boot is out of scope.** Order: GPIO remap if needed → GPIO for the used interfaces → interfaces (UART, later SPI) → DMA if needed (§10). The CPU boot (HSE, flash latency, PLL, dividers, SYSCLK switch) may be implemented separately, but the Printer must start without it, at the lower reset clock (F103: HSI 8 MHz). On PC, a mock may be implemented if needed. *Revised 2026‑10‑24:* an earlier version of this decision, from the same day, had the Printer also run the CPU boot (quoted second). | "Printer must boot needed hardware only. CPU boot is out of scope. It can be implemented, but printer must start without it - at lower speed. … comment out PLL - it's a part of CPU boot (optional), not printer", 2026‑10‑24. Superseded wording: "we must implement complex boot for MC … turn on PLL, achieve high frequency, switch CPU clock source. Then, if needed, boot and set GPIO Remapping, always boot GPIO needed by used interfaces, boot interfaces like UART or, potentially, SPI. Then boot and set DMA if needed. On PC a mock may be implemented if needed", 2026‑10‑24 |
+| 13.24 | **Chip selection and chip files** (§2, §10). `Hardware/PrinterInit.h` declares the platform functions. Public `mc_chip.h` / `pc_chip.h` are the single selection points, each with one manually uncommented chip include. `mc_<chip>.h` holds the real addresses, `pc_<chip>.h` binds the registers to static variables, and a shared `<chip>_regs.h` holds the layout. Chip files are named after the CMSIS device define (`STM32F103xE`). PC-only chip headers (e.g. `pc_STM32F407xx.h`) are allowed. This also settles the "more MC platforms" question from §13.22. | "Pick the chip in one place … absolutely agree – add public mc_chip.h (and pc_chip.h)"; "we can potentially add pc_STM_F407xxxx.h only, without mc_STM_F407xxxx.h couple if we are not going to compile for STM32F407", 2026‑10‑24 |
+| 13.26 | **HSE start failure is out of Printer scope.** Starting HSE belongs to the optional CPU boot (§13.23). The Printer never starts HSE, so it has no HSE failure path. | Follows from the revised §13.23, 2026‑10‑24 |
 
 ### Open items
 
@@ -313,7 +337,6 @@ Item numbers are stable: a decided item keeps its number, so references such as 
    - *Trigger question, restated concretely:* if `file0.name = "run.csv"` and then `file0.close()` is called **without any bytes written**, should the output contain `=== BEGIN run.csv ===` + `=== END run.csv ===` (an empty file with markers present), or nothing at all (the file was never opened)? Proposal: markers are emitted at `open()`, so an empty opened file still yields a marker pair. The "name assigned, no `open()`" case is §13.17. Confirm, or specify "markers only on first byte".
    - *Sub-question:* does the PC file contain the markers, or are they stripped before writing? (Proposal: kept, for platform parity.)
    - *Sub-question:* on MC, should `OpenMode` be carried in the BEGIN marker (e.g. `=== BEGIN <name> truncate ===`) so the splitter can append or replace? Proposal: no. Each marker pair produces one fresh file, and `OpenMode` affects PC only.
-- **13.6** **GPIO AF setup.** §9 currently assigns GPIO AF to `printerPlatformInit()` in `Hardware/`. If you prefer the host boot layer to own it, move the pin/AF constants out of `config_mc.h` and remove the GPIO AF part from `printerPlatformInit()`. The USART and DMA programming stays. **Confirm or override.**
 - **13.11** **`printerPlatformInit()` naming.** `hardwareInit()` from earlier drafts is renamed `printerPlatformInit()` to match the camelCase convention and to pair with `printerInit()`. Confirm.
 - **13.12** **`updateUsartX()` naming.** Old `update_UsartX()` renamed `updateUsartX()` per camelCase. Confirm.
 - **13.13** **Colour model.** Applied in this draft: `Color` is a 16-colour SGR code with named presets (`darkGray` = 90, `darkGreen` = 32, …) that match the request's names. The alternative is `Color { r, g, b }`, emitted as 24-bit `ESC[38;2;r;g;bm`, which the request's palette names don't need and older terminals don't support. Confirm 16-colour, or ask for RGB, either instead or in addition.
@@ -324,9 +347,14 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 - **13.18** **`hold` semantics by example.** Targets already persist until the next switch (§4), so a before/after example is needed to show what `hold` adds. A candidate reading is "restore the previous `pStream` at `endLine`": `prt1 << streamLog << "a" << endLine << hold << streamError << "b" << endLine << "c"`, where `"c"` goes to `streamLog`. Confirm or replace.
 - **13.19** **`fileN.name` lifetime and enforcement.** A raw `const char*` must point to static-lifetime storage, and "legal only before first write / after `close()`" is not enforced today. Proposal: make `name` private behind `setName(const char*)` with a debug assert on misuse. The alternative is to keep the public field with a documented contract only.
 - **13.20** **Role → target mapping form.** A `constexpr` pointer to `mcUsart2` would require `config_mc.h` to include the `UsartStream` declarations, which risks an include cycle (`UsartStream` needs `cfg::usart2Settings`). This draft shows enums (`McSink`, `PcSink`) that `printerInit()` resolves. Confirm, or choose an index mapping or another form.
-- **13.21** **PC register emulation.** The request says the PC config assigns "Registers pointers … to static variables (including GPIO)". This draft does not do that: PC uses `ConsoleStream` / `FileStream`, and `Hardware/` has no register code on PC. Accept the omission, or require emulation (for example, to run `UsartStream` logic on the host in tests).
 - **13.22** **Other unspecified behaviour.**
     - `flushDma` on PC: a no-op, or `std::cout.flush()` / `ofstream::flush()`?
     - `UartSettings` on PC: unused, rejected by a `static_assert`, or used by a future PC serial-port sink?
-    - More MC platforms (the request's TODO): one `config_<chip>.h` per chip, selected by CMake?
     - ISR or concurrent writes into the DMA banks (handoff P-13): forbidden, guarded by a critical section, or given a separate ISR-safe path?
+- **13.25** **Boot entry point.** BY suggested "a method `printer.boot()`". This draft writes it as `prt1.boot()`, which runs `printerPlatformInit()` and then `printerInit()` (§9). Still to decide: should the two free functions stay public (for tests and for projects without `prt1`), or become private to `boot()`? And should `printerPlatformInit()` be renamed to match, e.g. `bootPlatform()` (this also answers §13.11)?
+- **13.27** **Keeping the Printer's clock values in step with the CPU clock.** BRR and the backpressure budget use `cfg::apb1Frequency_Hz` / `apb2Frequency_Hz` / `cpuFrequency_MHz`. These must match the clock actually running at `prt1.boot()`: HSI 8 MHz by default, or whatever an optional CPU boot set up. If a CPU boot is added and `sysclkFrequency_Hz` is not updated, every baud rate is wrong. Options:
+    - (a) keep the `constexpr` values and document "update `sysclkFrequency_Hz` and the APB values when a CPU boot is added". This is zero cost, but the mistake is silent.
+    - (b) at boot, read the running clock from `RCC->CFGR` (SWS, PLLMUL, PPRE1/PPRE2) and compute the APB frequencies at runtime. This is a few instructions and always correct; the PC model returns the reset values.
+    - (c) as (b), but `static_assert`/debug-assert that the runtime value equals the `constexpr` one, so a mismatch is caught.
+
+    Proposal: (c). Decide.
