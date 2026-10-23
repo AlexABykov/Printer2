@@ -178,6 +178,10 @@ New entries go directly below this line, newest first.
 
 ## Mailbox entry — 2026-10-20 (session 1) — **`Plans/Config/Config Demand.md` file created; the project is still a skeleton; Next is the demand discussion; then v0 stream API.**
 
+> **Correction (2026-10-23).** `Config Demand.md` was later renamed `Plans/Config/Config Request.md`
+> (commit ef0cd95). Its companion spec is `Plans/Config/Config Specification.md`. The heading above
+> is left as written.
+
 ## Mailbox entry — 2026-10-20 (session 0) — **Bootstrap handoff written; the project is still a skeleton. Next is the v0 stream API.**
 
 **State.** No implementation exists beyond the placeholder. `Printer/` is empty. No test suite, no
