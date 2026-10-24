@@ -214,7 +214,7 @@ Recorded in spec §13 with BY's wording.
 | ID | Decision | Date |
 |---|---|---|
 | 13.54 | Base keywords `file0` … `file8`; on the PC each is a file with its own unique name. No indexed `file(i)` keyword; `prt2.file(index, …)` stays the only indexed access. Projects name the base keywords with aliases | 2026‑10‑25 |
-| 13.55 | Each base keyword has its own type, and any object of that type is that keyword: "`BaseKeyWordTypeFoo bar;` - now bar will work exactly like foo". Keywords are empty tags; `Printer` selects the stream by the type. This is the old project's model (`KeyWords::` structs, one `operator<<` per struct), and it replaces the same-day proposal of reference aliases (`FileStream& recorder = file6;`) | 2026‑10‑25 |
+| 13.55 | Each base keyword has its own type, and any object of that type is that keyword: "`BaseKeyWordTypeFoo bar;` - now bar will work exactly like foo". Keywords are empty tags; `Printer` selects the stream by the type. This is the old project's model (`KeyWords::` structs, one `operator<<` per struct). Example: when the Recorder needs a file, it creates its own alias, `File6 recorder;`. Which file it picks doesn't matter: "recorder has the same type as file6. Or file2. Doesn't matter" | 2026‑10‑25 |
 
 ### Open
 
