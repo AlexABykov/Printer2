@@ -35,7 +35,7 @@ The microcontroller has **no operating system**, very little RAM, and a poor hea
 
 ### 2.1 Forbidden
 
-1. **The C++ standard library.** No `std::` anything, and no C++ library header: not `<cstdint>`, `<cstring>`, `<array>`, `<new>`, `<type_traits>`, `<algorithm>`, `<iostream>`, `<string>`, `<vector>`, and so on.
+1. **The C++ standard library**, except `<cstdint>` (§2.2). No `std::` anything, and no other C++ library header: not `<cstring>`, `<array>`, `<new>`, `<type_traits>`, `<algorithm>`, `<iostream>`, `<string>`, `<vector>`, and so on.
 2. **The heap.** No `new`, `delete`, `malloc`, `free`, or anything that calls them. All storage is static and sized at compile time.
 3. **Exceptions and RTTI.** No `throw`, `try`, `dynamic_cast` or `typeid`.
 4. **Globals with non-trivial destructors.** Such a global is registered through `__cxa_atexit`, and `atexit` may allocate. Check each global's class with `static_assert(__has_trivial_destructor(T))`. That built-in works in g++ 15.2; `__is_trivially_destructible` does not exist there.
@@ -45,7 +45,11 @@ The microcontroller has **no operating system**, very little RAM, and a poor hea
 
 ### 2.2 Allowed
 
-- The compiler's own freestanding C headers, which hold types and macros only and cost no RAM and no code: `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>`, `<float.h>`. Types are written unqualified: `uint8_t`, `uint32_t`, `size_t`.
+- **System headers on the allow-list only**, which hold types and macros only and cost no RAM and no code:
+  - `<cstdint>`, the one allowed C++ header;
+  - the compiler's own freestanding C headers `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>` and `<float.h>`.
+
+  Types are written unqualified: `uint8_t`, `uint32_t`, `size_t`.
 - Compiler built-ins, such as `__has_trivial_destructor` and `__builtin_memcpy`, where a standard header would otherwise be needed.
 - `constexpr`, templates, `enum class`, `static_assert` and plain classes with virtual functions (no virtual destructors).
 
@@ -53,20 +57,14 @@ The microcontroller has **no operating system**, very little RAM, and a poor hea
 
 - **Configuration is data:** `inline constexpr` variables in `namespace cfg`, with no assignments at namespace scope.
 - **Streams and `nullSink` are constant-initialized** (`constexpr` constructors), so they are safe to use before boot. `prt1` is the one dynamically initialized global, because its constructor boots the hardware.
-- **Headers are `.hpp`**, starting with:
-  ```cpp
-  #pragma once
-  #ifndef __cplusplus
-  #error "<name>.hpp is a C++ header"
-  #endif
-  ```
+- **Headers are `.hpp`** (C++17, not C-compatible) and start with `#pragma once` alone.
 - **Naming** (spec §2): types `PascalCase`; instances, functions and `constexpr` values `camelCase`; macros `SCREAMING_SNAKE_CASE`, only when really needed; physical quantities may end in a unit suffix (`cpuFrequency_MHz`).
 
 ### 2.4 Enforcement
 
-- Common and MC sources compile with **`-nostdinc++`**: any C++ library header becomes a build error, while the C headers above still work. MC builds add `-fno-exceptions -fno-rtti -fno-threadsafe-statics`.
+- **CMake include allow-list.** At configure time, CMake reads every `#include <...>` line of each Common and MC file and fails if the header isn't on the §2.2 list. Editing a checked file re-runs the check on the next build. Project includes (`#include "..."`) are not checked. MC builds also add `-fno-exceptions -fno-rtti -fno-threadsafe-statics`.
 - The MC link provides **no `_sbrk`**, so heap use is a link error, not a runtime failure.
-- `-nostdinc++` doesn't catch `malloc` through a C header on the PC build. Until the MC build exists, code review covers that: no `new`, `malloc` or `std::` outside PC files.
+- The include check doesn't catch `malloc` through an allowed C header, or a call to `new`, on the PC build. Until the MC build exists, code review covers that: no `new`, `malloc` or `std::` outside PC files.
 
 ## 3. PC code rules
 
@@ -84,7 +82,7 @@ There are **two absolutely independent test suites, one per platform.** They sha
 
 | Suite | Where | Rules |
 |---|---|---|
-| **PC** | `Tests/pc/` | May use everything the PC offers: the standard library, any test framework, files, processes, the Windows or Linux API. It also tests the Common code, compiled for the host. A PC test that proves a Common header is clean (for example, that `config.hpp` compiles alone) builds that file with `-nostdinc++` |
+| **PC** | `Tests/pc/` | May use everything the PC offers: the standard library, any test framework, files, processes, the Windows or Linux API. It also tests the Common code, compiled for the host. That a Common file is clean is checked by the CMake include check (§2.4), not by the tests |
 | **MC** | `Tests/mc/` | Does its own job, under the MC and Common rules (§2). It is built and run by its own means, independently of the PC suite |
 
 - Production code contains no test hooks. Tests observe behaviour through public interfaces, for example a `CaptureStream` installed as a stream's inner sink (spec §12).

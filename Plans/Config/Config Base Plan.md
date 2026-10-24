@@ -94,7 +94,7 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
     └── mc/                      # (MC Hardware plan) MC suite, independent of the PC suite
 ```
 
-Every header starts with `#pragma once` and the `__cplusplus` guard (spec §2).
+Every header starts with `#pragma once` (spec §2, §13.29).
 
 ## 4. Phases
 
@@ -102,7 +102,7 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 
 ### Phase 0 — Repository preparation
 1. Move `main()` from the root `config.h` into `main.cpp` (resolves handoff P-12 in favour of "keep the config header as compile-time config").
-2. `git mv config.h Config/config.hpp` (now holding only `#pragma once` and the `__cplusplus` guard), and point the include path at `Config/`.
+2. `git mv config.h Config/config.hpp` (now holding only `#pragma once`), and point the include path at `Config/`.
 3. Add `.gitignore` for `.idea/`, `cmake-build-*/`, `build/`, `*.exe`. (`main.exe` is currently untracked in the root.)
 4. Build with MinGW 15.2: `cmake -S . -B build && cmake --build build`.
 
@@ -110,10 +110,10 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 
 ### Phase 1 — `Config/config.hpp` (common)
 1. Write the header as specified in spec §9: feature flags, `Color` + 16 presets, `Parity` / `StopBits` / `FlowControl`, `UartSettings` (with `bankSize`, spec §7), `uartDefault`, `printerMinBankSize` (4), `printerMaxBankSize`, `defaultFileName`.
-2. Declare the constants `inline constexpr` (C++17), not plain `constexpr`. Plain `constexpr` at namespace scope gives each translation unit its own copy. That is harmless for integers, but `inline` gives `defaultFileName` one address everywhere. This is a deviation from the sketch's spelling only, not its meaning.
-3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<stdint.h>`, never `<cstdint>` (spec §1.1).
+2. Declare the constants `inline constexpr` (C++17), as the spec sketches now do. Plain `constexpr` at namespace scope gives each translation unit its own copy; `inline` gives `defaultFileName` one address everywhere.
+3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<cstdint>` (spec §1.1).
 
-**Done when:** `test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles with `-nostdinc++` (spec §1.1). It also `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`.
+**Done when:** `test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles, and the CMake include check passes for it (spec §1.1). The detailed plan is `Phase 1 plan.md`. It also `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`.
 
 ### Phase 2 — Platform selection and CMake
 1. `PRINTER_PLATFORM` cache variable, `PC` (default) or `MC`. Configuring with any other value is an error.
@@ -124,10 +124,10 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
    - `printer_2`: the demo; links `printer`.
    - `printer_tests`: the **PC suite** (`Tests/pc/`), registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`. The MC suite (`Tests/mc/`) is independent and belongs to the MC Hardware plan (spec §12).
    - `config_mc_check`: compile-only object library for Phase 6, part of the PC suite; never linked. It checks `config_mc.hpp`, which is a Common-area file (`AGENTS.md` §1).
-   - **Library rules (spec §1.1):** common sources (`Config/`, `Printer/` outside `pc_*`) and `mc_*` sources compile with `-nostdinc++`, so a C++ library header is a build error. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources compile without `-nostdinc++`. CMake sets this per source file group.
+   - **Library rules (spec §1.1):** `printer_check_includes` (introduced in Phase 1) is applied to every Common and MC source, so a header outside the allow-list (`<cstdint>` and the compiler's C headers) fails at configure time. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
-**Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <cstdint>` in a common file fails the build (manual check, then reverted).
+**Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <array>` in a common file fails the build (manual check, then reverted).
 
 ### Phase 3 — `Config/config_pc.hpp`
 1. As in spec §9: `platformHasColor = true`, the `PcSink` enum, `infoTarget` / `messageTarget` / `errorTarget`, and `infoColor` / `messageColor` / `errorColor`. Function declarations live in `Hardware/PrinterInit.hpp`, not here, so the config stays data-only.
@@ -231,7 +231,7 @@ The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot
 
 ## 7. Risks and checks
 
-- **Library rules (spec §1.1).** `-nostdinc++` on common sources catches a C++ library header, but it doesn't catch a call to `malloc` or `new` through a C header. On the PC those link silently; on the MC, the link without `_sbrk` catches them. Until the MC build exists, code review is the check: no `new`, `malloc` or `std::` outside `pc_*` files. `Tests/pc/` is PC code and may use the standard library. The one exception is `test_config_common.cpp`, which compiles with `-nostdinc++` to prove that `config.hpp` is clean.
+- **Library rules (spec §1.1).** The include check catches a forbidden header, but not a call to `malloc` or `new` through an allowed one. On the PC those link silently; on the MC, the link without `_sbrk` catches them. Until the MC build exists, code review is the check: no `new`, `malloc` or `std::` outside `pc_*` files. `Tests/pc/` is PC code and may use the standard library.
 - **Trivial destructors** (spec §1.1 rule 4). `BaseStream` has no virtual destructor (Phase 4), and the same goes for `Stream`, `NullStream`, `FileStream` and `Printer`. Each class gets `static_assert(__has_trivial_destructor(T))`, using the compiler built-in because `<type_traits>` is not allowed in common code. Checked with g++ 15.2.0 under `-nostdinc++` on 2026‑10‑24: `__has_trivial_destructor` works, and `__is_trivially_destructible` does not exist in that compiler.
 
 - **Constant initialization of the streams** (§4). This depends on every stream type having a `constexpr` constructor and on `nullSink` being constant-initialized. GCC has no `-Wglobal-constructors` and C++17 has no `constinit`, so the check is test B1 plus a code-review rule: no stream type may have a member with a non-`constexpr` constructor (D-4).

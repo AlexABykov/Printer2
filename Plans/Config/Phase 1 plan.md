@@ -1,29 +1,35 @@
 # Phase 1 Plan — `Config/config.hpp` (common configuration)
 **Status:** Draft, awaiting BY's approval.  
-**Date:** 2026‑10‑24 (revised 2026‑10‑24: no C++ library, `<stdint.h>`, `-nostdinc++`)  
+**Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only, include allow-list instead of `-nostdinc++`)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 1 (and the remainder of Phase 0, §2 below)  
-**Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §2, §5, §7, §8, §9 (`config.hpp`), §13.13, §13.29, §13.32, §13.33, §13.35
+**Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §2, §5, §7, §8, §9 (`config.hpp`), §13.13, §13.29, §13.32, §13.33, §13.35  
+**Rules:** [`AGENTS.md`](../../AGENTS.md) §2 (MC and Common code)
 
-> **Build status (2026‑10‑24).** Nothing is changed in the repository yet. The header and both test files listed below were **compiled and run in a scratch directory outside the repository**, extracted directly from this document's code blocks (re-run 2026‑10‑24 after the switch to `<stdint.h>`):
-> - `g++.exe (GCC) 15.2.0` from CLion's bundled MinGW, with `-std=c++17 -Wall -Wextra -Wpedantic -Werror -nostdinc++ -fno-exceptions -fno-rtti`;
-> - CMake 4.3.1 with the "MinGW Makefiles" generator, using the CMake additions in §4.
+> **Build status (2026‑10‑24).** Nothing is changed in the repository yet. The header, both test files and the CMake additions below were **built and run in a scratch directory outside the repository**, with the header and tests extracted from this document's code blocks:
+> - `g++.exe (GCC) 15.2.0` from CLion's bundled MinGW, with `-std=c++17 -Wall -Wextra -Wpedantic -Werror`;
+> - CMake 4.3.1 with the "MinGW Makefiles" generator.
 >
-> Results: both targets built, `config_common_check.exe` exited 0, and the demo exited 0. A C file including `config.hpp` failed with the intended `#error`, and adding `#include <cstdint>` to the test failed under `-nostdinc++` ("No such file or directory"), as spec §1.1 intends. The toolchain is not on the shell PATH; it lives at `C:/Users/BY/AppData/Local/Programs/CLion/bin/mingw/bin` (compiler) and `…/CLion/bin/cmake/win/x64/bin` (CMake), as the existing `cmake-build-debug/CMakeCache.txt` also shows.
+> Results:
+> - both targets built; `config_common_check.exe` and the demo both exited 0;
+> - adding `#include <array>` to `config.hpp` made the next plain `cmake --build` fail at configure time with "`<array>` is not allowed in Common or MC code".
+>
+> The toolchain is not on the shell PATH. It lives at `C:/Users/BY/AppData/Local/Programs/CLion/bin/mingw/bin` (compiler) and `…/CLion/bin/cmake/win/x64/bin` (CMake), as the existing `cmake-build-debug/CMakeCache.txt` also shows.
 
 ## 1. Goal and done criteria
 
 Write the common configuration header exactly once, so the later phases only include it. The header must:
-- compile **alone**, with no platform header, no vendor header and no C++ library header (`-nostdinc++`, spec §1.1);
+- compile **alone**, with no platform header and no vendor header;
+- include no system header outside the allow-list (`<cstdint>` and the compiler's C headers, `AGENTS.md` §2);
 - contain data only (`namespace cfg`, `inline constexpr`);
 - reject invalid UART settings at compile time, where they are written.
 
 **Done when:**
-- [ ] `Config/config.hpp` exists with the content in §3.
-- [ ] `config_common_check` builds with `-Wall -Wextra -Wpedantic -Werror -nostdinc++ -fno-exceptions -fno-rtti`, and every `static_assert` in `Tests/pc/test_config_common.cpp` holds.
+- [ ] `Config/config.hpp` exists with the content in §3.1.
+- [ ] The CMake include check (§4) passes for `config.hpp`.
+- [ ] `config_common_check` builds with `-Wall -Wextra -Wpedantic -Werror`, and every `static_assert` in `Tests/pc/test_config_common.cpp` holds.
 - [ ] `config_common_check.exe` exits 0 (one `cfg::defaultFileName` across two translation units).
 - [ ] The demo `printer_2` still builds and exits 0.
-- [ ] Manual one-off check: a C file that includes `config.hpp` fails with `#error "config.hpp is a C++ header"`.
-- [ ] Manual one-off check: adding `#include <cstdint>` to the test makes the check target fail to build; then revert.
+- [ ] Manual one-off check: adding `#include <array>` to `config.hpp` makes the next build fail with "not allowed in Common or MC code"; then revert.
 - [ ] Results (compiler, commands, exit codes) are recorded in a new `_ProjectHandOff.md` mailbox entry (house rule 5).
 
 ## 2. Prerequisite: the rest of Phase 0
@@ -44,17 +50,14 @@ The base plan's build-status note ("`config.h` still holds the `main()` stub") a
 
 ### 3.1 Write `Config/config.hpp`
 
-This is the content compiled in the scratch check. It follows the spec §9 sketch, with the deviations listed in §5.
+This is the content built in the scratch check. Spec §9 now shows the same code (§5).
 
 ```cpp
 #pragma once
-#ifndef __cplusplus
-#error "config.hpp is a C++ header"
-#endif
 
 // Common Printer configuration (Config Specification §9). Data only, namespace cfg.
 
-#include <stdint.h>   // compiler-provided C header; no C++ library (spec §1.1)
+#include <cstdint>
 
 namespace cfg {
 
@@ -77,12 +80,12 @@ enum class StopBits    : uint8_t { one, two };
 enum class FlowControl : uint8_t { none, rtsCts };
 
 struct UartSettings {
-    uint32_t baudrate;
-    uint32_t bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
-    uint8_t  dataBits;     // data bits, parity bit not counted (Q-1)
-    Parity        parity;
-    StopBits      stopBits;
-    FlowControl   flowControl;
+    uint32_t    baudrate;
+    uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
+    uint8_t     dataBits;     // data bits, parity bit not counted (Q-1)
+    Parity      parity;
+    StopBits    stopBits;
+    FlowControl flowControl;
 };
 
 inline constexpr uint32_t printerMinBankSize = 4;      // §7, §13.33; 1-3 not yet proven
@@ -111,9 +114,10 @@ Notes on the code:
 - **`inline constexpr`** on every variable gives one object per program instead of one per translation unit. The second test file checks this for `defaultFileName` (§3.2).
 - **`constexpr` functions are implicitly `inline`,** so `isValid` can live in the header.
 - **The header's own `static_assert`s** guard the bounds themselves. Platform headers (Phase 3 and Phase 6) will add `static_assert(cfg::isValid(usartNSettings))` for each of their settings constants.
-- **`<stdint.h>`, not `<cstdint>`** (spec §1.1, §13.35). The C header comes with the compiler, holds only typedefs and macros, and costs no RAM and no code; it exists in the bare-metal MC build too. `<cstdint>` is a C++ library header and is forbidden in common code, so the types are written unqualified: `uint8_t`, `uint32_t`.
+- **`<cstdint>`** is the one C++ library header allowed in Common and MC code (`AGENTS.md` §2). It holds only typedefs, costs no RAM and no code, and is also available in a bare-metal ARM toolchain. The types are written unqualified (`uint8_t`), as the "no `std::`" rule asks. Strictly, the standard guarantees only `std::uint8_t` from `<cstdint>`. GCC's `<cstdint>` includes `<stdint.h>`, which declares the global names as well, so the unqualified spelling works with GCC, and it is the common practice in embedded C++.
+- **`#pragma once` only.** The `.hpp` extension already says the header is C++17 and not C-compatible, so no `__cplusplus` guard is added.
 
-### 3.2 Write the checks
+### 3.2 Write the checks (PC suite)
 
 `Tests/pc/test_config_common.cpp` holds the compile-time checks. It includes **only** `config.hpp`.
 
@@ -195,6 +199,8 @@ int main() {
 }
 ```
 
+These are PC-suite tests (`AGENTS.md` §4). They may use anything the PC offers. They happen to need nothing beyond `config.hpp`, which also shows that the header compiles alone.
+
 ### 3.3 Build and run
 
 From CLion, or from a shell with the toolchain on the PATH:
@@ -206,7 +212,7 @@ build/config_common_check.exe     # expect exit 0
 build/printer_2.exe               # expect exit 0
 ```
 
-Manual guard check, run once and not part of the build: compile a one-line C file `#include "config.hpp"` with `gcc -fsyntax-only -IConfig`, and expect `error: #error "config.hpp is a C++ header"`.
+Manual check, run once and then reverted: add `#include <array>` to `config.hpp`, run `cmake --build build`, and expect a configure error naming `<array>`.
 
 ### 3.4 Record and commit
 
@@ -215,15 +221,38 @@ Manual guard check, run once and not part of the build: compile a one-line C fil
 
 ## 4. CMake changes
 
-Only two additions to the existing `CMakeLists.txt`: the `Config/` include directory, and the check target. Phase 2 replaces the check target with `printer_tests` under `ctest` and adds the `PRINTER_PLATFORM` switch and presets. This keeps Phase 1 from building Phase 2's infrastructure early.
+Three additions to the existing `CMakeLists.txt`:
+1. the include allow-list check;
+2. the `Config/` include directory;
+3. the check target.
+
+Phase 2 replaces the check target with `printer_tests` under `ctest`, applies the include check to every Common and MC source, and adds the `PRINTER_PLATFORM` switch and presets.
 
 ```cmake
+# Common and MC code may include only these system headers (spec §1.1, AGENTS.md §2).
+set(PRINTER_ALLOWED_SYSTEM_HEADERS cstdint stdint.h stddef.h stdarg.h limits.h float.h)
+
+function(printer_check_includes)
+    foreach(file IN LISTS ARGN)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
+        file(STRINGS "${file}" lines REGEX "^[ \t]*#[ \t]*include[ \t]*<")
+        foreach(line IN LISTS lines)
+            string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*<([^>]+)>.*" "\\1" header "${line}")
+            if(NOT header IN_LIST PRINTER_ALLOWED_SYSTEM_HEADERS)
+                message(FATAL_ERROR "${file}: <${header}> is not allowed in Common or MC code (AGENTS.md §2)")
+            endif()
+        endforeach()
+    endforeach()
+endfunction()
+
+printer_check_includes(${CMAKE_CURRENT_SOURCE_DIR}/Config/config.hpp)
+
 target_include_directories(printer_2 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Config
 )
 
-# Phase 1 check: config.hpp alone. Folded into printer_tests in Phase 2.
+# Phase 1 check (PC suite): config.hpp alone. Folded into printer_tests in Phase 2.
 add_executable(config_common_check
     Tests/pc/test_config_common.cpp
     Tests/pc/test_config_common_main.cpp
@@ -233,24 +262,26 @@ target_include_directories(config_common_check PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Config
 )
 
-target_compile_options(config_common_check PRIVATE
-    -Wall -Wextra -Wpedantic -Werror
-    -nostdinc++ -fno-exceptions -fno-rtti   # spec §1.1: no C++ library in common code
-)
+target_compile_options(config_common_check PRIVATE -Wall -Wextra -Wpedantic -Werror)
 ```
+
+How the include check works:
+- It runs at configure time and reads each listed file's `#include <...>` lines. Project includes (`#include "..."`) are not checked.
+- `CMAKE_CONFIGURE_DEPENDS` makes CMake re-run the check whenever a listed file changes, so a forbidden include fails the very next build.
+- It checks each file's own lines, not what an allowed header includes in turn. That is the intent: the allow-listed headers are known to be type-only.
 
 `-Werror` is applied only to the check target in this phase. Whether the whole project builds with `-Werror` is a Phase 2 question (Q-3).
 
-## 5. Deviations from the spec sketch, and questions for BY
+## 5. Agreed with BY (2026‑10‑24), and questions
 
-**Deviations** (spelling only, no change in meaning):
+The earlier deviations from the spec sketch were settled as follows, and spec §9 now shows the Phase 1 code:
 
-| Where | Spec sketch | Here | Why |
-|---|---|---|---|
-| All variables | `constexpr` | `inline constexpr` | One object per program (base plan Phase 1 step 2) |
-| Include | — | `<stdint.h>` | Spec §1.1: no C++ library headers in common code; the sketch now says the same |
-| Header start | `#pragma once` | `#pragma once` + `__cplusplus` guard | Spec §2, §13.29 |
-| Additions | — | `isValid()` and three `static_assert`s | Base plan Phase 1 step 3 |
+| Item | Decision |
+|---|---|
+| `constexpr` vs `inline constexpr` | `inline constexpr` everywhere |
+| `<stdint.h>` vs `<cstdint>` | `<cstdint>`, types unqualified. "It works fine in similar SIL projects." `-nostdinc++` is therefore replaced by the include allow-list (§4) |
+| `__cplusplus` guard | Dropped: `#pragma once` alone; the `.hpp` name says C++17, not C-compatible |
+| `isValid()` and the three `static_assert`s | Added to `config.hpp` and to the spec sketch |
 
 **Questions** (each has a provisional answer, already used in the code):
 
@@ -260,13 +291,16 @@ target_compile_options(config_common_check PRIVATE
 | Q-2 | Phase 0 as its own commit, or merged into Phase 1? | Its own commit (§2) |
 | Q-3 | `-Wall -Wextra -Wpedantic -Werror` project-wide from Phase 2 on? | Yes, decided in Phase 2; Phase 1 applies it to the check target only |
 | Q-4 | Keep the check as an executable (it has one run-time check), or make it compile-only? | Executable: the single-address check needs two linked translation units |
+| Q-5 | Allow-list contents. Besides `<cstdint>`, should the other type-only C++ wrappers (`<cstddef>`, `<climits>`, `<cfloat>`, `<cstdarg>`) be allowed too, for consistency? | Not yet: only `<cstdint>` was asked for. The C forms (`<stddef.h>`, `<stdarg.h>`, …) cover the same needs |
 
 ## 6. Risks
 
 - **Silent copies instead of one object.** If someone later writes plain `constexpr` for a new variable, each translation unit gets its own copy. Nothing breaks for integers, but addresses differ. The two-TU check covers `defaultFileName` only. A code-review rule covers the rest: every `cfg::` variable is `inline constexpr`.
+- **The include check only sees what it is given.** In Phase 1 that is `config.hpp`. Phase 2 must pass every Common and MC source to `printer_check_includes`, or new files go unchecked.
+- **Unqualified names from `<cstdint>`** rely on GCC providing the global names (§3.1 notes). Both the host MinGW and `arm-none-eabi-gcc` do. A different compiler would need a check.
 - **`using namespace cfg` in the test** is confined to an anonymous namespace in a test file. Production code always writes `cfg::`.
 - **Toolchain not on the PATH.** The §3.3 commands need CLion's MinGW and CMake `bin/` directories on the PATH (paths in the build-status note). Otherwise, build from CLion.
 
 ## 7. Next
 
-Phase 2 of the base plan: the `PRINTER_PLATFORM` switch, `CMakePresets.json` (`pc`, `mc`), `config_platform.hpp` selection, the `printer` library target, and `printer_tests` under `ctest`, which absorbs `config_common_check`.
+Phase 2 of the base plan: the `PRINTER_PLATFORM` switch, `CMakePresets.json` (`pc`, `mc`), `config_platform.hpp` selection, the `printer` library target, the include check over all Common and MC sources, and `printer_tests` (PC suite) under `ctest`, which absorbs `config_common_check`.

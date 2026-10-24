@@ -19,14 +19,18 @@ The new `Printer` module is a **standalone, portable** subsystem, intentionally 
 
 The MC has no operating system, very little RAM, and only a poor heap allocator with no defragmentation. Even when free heap is available, allocating anything larger than a byte can't be relied on. So these rules apply to **all common code** (`Config/`, `Printer/` outside `pc_*`) and to **all MC code** (`mc_*`, chip headers), §13.35:
 
-1. **No C++ standard library.** No `std::` facilities and no C++ library headers: not `<cstdint>`, `<array>`, `<new>`, `<algorithm>`, `<iostream>`, and so on. Only the compiler's own freestanding C headers are allowed, because they hold types and macros only and cost no RAM and no code: `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>`, `<float.h>`. Types are written unqualified (`uint8_t`, `uint32_t`).
+1. **No C++ standard library, with one exception.** No `std::` facilities and no C++ library headers: not `<array>`, `<new>`, `<type_traits>`, `<algorithm>`, `<iostream>`, and so on. The allowed system headers hold types and macros only, and cost no RAM and no code:
+   - `<cstdint>`, the one allowed C++ header (decision 13.35, revised 2026‑10‑24: "it works fine in similar SIL projects");
+   - the compiler's own freestanding C headers `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>` and `<float.h>`.
+
+   Types are written unqualified (`uint8_t`, `uint32_t`). GCC's `<cstdint>` includes `<stdint.h>`, so the global names are declared too.
 2. **No heap.** No `new`, `delete`, `malloc` or `free`, and nothing that calls them. All storage is static and sized at compile time.
 3. **No exceptions and no RTTI.** The MC build uses `-fno-exceptions -fno-rtti`.
 4. **Trivial destructors for globals.** A global with a non-trivial destructor is registered through `__cxa_atexit`, and the C library's `atexit` may allocate. Every global stream, `nullSink` and `prt1` keeps a trivial destructor.
 5. **No function-local statics with dynamic initialization.** Their thread-safe guards pull in `__cxa_guard_*`; the MC build also uses `-fno-threadsafe-statics`.
 
 **Enforcement:**
-- Common and MC sources are compiled with `-nostdinc++`, which makes any C++ library header a compile error while leaving the compiler's C headers available. This was checked with g++ 15.2.0 on 2026‑10‑24: `<stdint.h>`, `<stddef.h>` and `<stdarg.h>` compile; `<cstdint>` and `<new>` fail with "No such file or directory".
+- **An include allow-list,** checked by CMake at configure time. Every `#include <...>` in a Common or MC file must name an allowed header (rule 1), or configuration fails; `CMAKE_CONFIGURE_DEPENDS` re-runs the check whenever such a file changes. This was checked with CMake 4.3.1 on 2026‑10‑24: adding `<array>` to `config.hpp` failed the next build with "`<array>` is not allowed in Common or MC code". It replaces the earlier `-nostdinc++` approach, which would also have blocked `<cstdint>`.
 - The MC link provides no `_sbrk`, so any use of the heap becomes a link error instead of a runtime failure.
 
 **PC-only code** (`pc_*.cpp` files, and headers included only by them) is free to use the full standard library, the heap, exceptions and the OS APIs (Windows, POSIX): the PC is a big developer's machine (§13.36). The boundary is that no `std` type, OS type or PC library header appears in any header that common code includes. A header follows the strictest area of any file that includes it, so `config_pc.hpp` and the PC chip headers follow the common rules. The working rules for each code area are in the repository's `AGENTS.md`.
@@ -38,7 +42,7 @@ The MC has no operating system, very little RAM, and only a poor heap allocator 
 - **Unit-suffix exception:** a `constexpr` holding a physical quantity may end in `_Unit` — `cpuFrequency_MHz`, `apb1Frequency_Hz`, `apb2Frequency_Hz`. The suffix keeps the unit visible at every use site (§13.14).
 - **Configuration constants** live inside `namespace cfg`. The namespace is `cfg`, not `Config`.
 - **Preprocessor macros** (only when a macro is genuinely required): `SCREAMING_SNAKE_CASE` — e.g. `PLATFORM_HAS_COLOR` if a `#if` switch is needed. Preferred form is `constexpr bool` so `#if` is avoided; if a macro is used, it is UPPERCASE.
-- **Headers are `.hpp`** throughout (§13.29). Every project header is C++ only (`namespace`, `enum class`, `constexpr`), and the extension says so in a C-heavy MC ecosystem. Each header starts with `#pragma once` followed by `#ifndef __cplusplus` / `#error "C++ header"` / `#endif`, so a C file that includes one fails with a clear message.
+- **Headers are `.hpp`** throughout (§13.29). Every project header is C++17 and not C-compatible (`namespace`, `enum class`, `constexpr`), and the extension says so. Each header starts with `#pragma once` alone.
 - **Chip files** are named after the ST device-line designation, with a platform prefix: `mc_STM32F103xE.hpp`, `pc_STM32F103xE.hpp`, and the shared layout `STM32F103xE_regs.hpp` (§10). The designation names the register map, which a whole line shares; the full part number (`STM32F103VET6`) adds only package and flash size.
 - **Hardware register names** follow the reference manual (RM0008 for the F103): peripherals `USART2`, `DMA1`, `GPIOA`, `RCC`; registers `CR1`, `BRR`, `CFGR`; bits `TXE`, `TC`. The project is **bare metal** (§13.30): it uses no vendor or CMSIS headers, and CMSIS appears in this document only as an illustration. The `UsartStream` instances are `mcUsart2` / `mcUsart3`, never `USART2`, so they don't clash with the register-block names.
 
@@ -162,30 +166,38 @@ Three data-only headers, all in `namespace cfg`, plus one binding entry point. *
 The sketches below fix names and types. The values are examples.
 
 ### `config.hpp` — common
-- `constexpr` feature flags: `printHexPrefix`, `doubleScientific`, `doublePlusInExponent`, `useColorDefault` (see §5 for its precedence).
+- Feature flags: `printHexPrefix`, `doubleScientific`, `doublePlusInExponent`, `useColorDefault` (see §5 for its precedence).
 - `Color` is a 16-colour SGR foreground code, with named presets that match the request's names (`darkGray`, `darkGreen`, …). 24-bit RGB is not supported in v1 (§13.13).
 - `UartSettings { baudrate, bankSize, dataBits, parity, stopBits, flowControl }`. `flowControl` comes from the README's "hardware flow control" requirement.
 - Default `UartSettings` constants used by both platforms.
 - `printerMinBankSize` and `printerMaxBankSize` (bounds, §7), and `defaultFileName` (§8).
 - No references to platform object names (`USART2`, `console0`, …).
+- `isValid(const UartSettings&)`: a `constexpr` check that `bankSize` is 0 or within the bounds, `dataBits` is 8 (any parity) or 9 (no parity), and `baudrate > 0`. Platform headers `static_assert` it for each of their settings constants. The header also `static_assert`s its own bounds and `uartDefault`.
+- All variables are `inline constexpr` (one object per program, not one per translation unit). The only system header is `<cstdint>` (§1.1).
 
 ```cpp
 #pragma once
-#include <stdint.h>   // compiler-provided C header; no C++ library (§1.1)
+
+// Common Printer configuration (Config Specification §9). Data only, namespace cfg.
+
+#include <cstdint>
 
 namespace cfg {
 
-constexpr bool printHexPrefix       = true;
-constexpr bool doubleScientific     = false;
-constexpr bool doublePlusInExponent = false;
-constexpr bool useColorDefault      = true;   // project switch, §5 precedence
+// Feature flags
+inline constexpr bool printHexPrefix       = true;
+inline constexpr bool doubleScientific     = false;
+inline constexpr bool doublePlusInExponent = false;
+inline constexpr bool useColorDefault      = true;   // project switch, §5 precedence
 
-struct Color { uint8_t sgr; };                // emitted as ESC[<sgr>m
-constexpr Color black{30},    red{31},       darkGreen{32}, yellow{33},
-                blue{34},     magenta{35},   cyan{36},      lightGray{37},
-                darkGray{90}, brightRed{91}, green{92},     brightYellow{93},
-                brightBlue{94}, brightMagenta{95}, brightCyan{96}, white{97};
+// Colour: 16-colour SGR foreground code, emitted as ESC[<sgr>m (§13.13)
+struct Color { uint8_t sgr; };
+inline constexpr Color black{30},      red{31},        darkGreen{32}, yellow{33},
+                       blue{34},       magenta{35},    cyan{36},      lightGray{37},
+                       darkGray{90},   brightRed{91},  green{92},     brightYellow{93},
+                       brightBlue{94}, brightMagenta{95}, brightCyan{96}, white{97};
 
+// UART settings
 enum class Parity      : uint8_t { none, even, odd };
 enum class StopBits    : uint8_t { one, two };
 enum class FlowControl : uint8_t { none, rtsCts };
@@ -193,17 +205,30 @@ enum class FlowControl : uint8_t { none, rtsCts };
 struct UartSettings {
     uint32_t    baudrate;
     uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
-    uint8_t     dataBits;
+    uint8_t     dataBits;     // data bits, parity bit not counted (Q-1)
     Parity      parity;
     StopBits    stopBits;
     FlowControl flowControl;
 };
 
-constexpr UartSettings uartDefault{115200, 0, 8, Parity::none, StopBits::one, FlowControl::none};
+inline constexpr uint32_t printerMinBankSize = 4;      // §7, §13.33; 1-3 not yet proven
+inline constexpr uint32_t printerMaxBankSize = 4096;   // upper bound only, §7; <= 65535 (CNDTR)
 
-constexpr uint32_t    printerMinBankSize  = 4;             // §7, §13.33; 1-3 not yet proven
-constexpr uint32_t    printerMaxBankSize  = 4096;          // upper bound only, §7; <= 65535 (CNDTR)
-constexpr const char* defaultFileName     = "noname.log";  // §8, both platforms
+inline constexpr UartSettings uartDefault{115200, 0, 8, Parity::none, StopBits::one, FlowControl::none};
+
+inline constexpr const char* defaultFileName = "noname.log";   // §8, both platforms
+
+// A settings constant is valid when the USART can be programmed from it as written.
+constexpr bool isValid(const UartSettings& s) {
+    const bool bankOk = s.bankSize == 0
+                     || (s.bankSize >= printerMinBankSize && s.bankSize <= printerMaxBankSize);
+    const bool bitsOk = s.dataBits == 8 || (s.dataBits == 9 && s.parity == Parity::none);
+    return s.baudrate > 0 && bankOk && bitsOk;
+}
+
+static_assert(printerMinBankSize >= 1 && printerMinBankSize <= printerMaxBankSize);
+static_assert(printerMaxBankSize <= 65535, "DMA CNDTR is a 16-bit register");
+static_assert(isValid(uartDefault));
 
 } // namespace cfg
 ```
@@ -222,36 +247,36 @@ constexpr const char* defaultFileName     = "noname.log";  // §8, both platform
 
 namespace cfg {
 
-constexpr bool platformHasColor = false;
+inline constexpr bool platformHasColor = false;
 
 // Clocks. The Printer does not boot the CPU (§10, §13.23); it runs on the clock in effect.
-constexpr uint32_t hseFrequency_Hz = 8'000'000;   // board crystal, used by an optional CPU boot
+inline constexpr uint32_t hseFrequency_Hz = 8'000'000;   // board crystal, used by an optional CPU boot
 
 // Optional CPU boot, not part of the Printer:
-// constexpr uint32_t pllMultiplier = 9;          // SYSCLK = HSE x 9 = 72 MHz
-// constexpr uint32_t ahbDivider    = 1;
-// constexpr uint32_t apb1Divider   = 2;          // APB1 = 36 MHz
-// constexpr uint32_t apb2Divider   = 1;
+// inline constexpr uint32_t pllMultiplier = 9;          // SYSCLK = HSE x 9 = 72 MHz
+// inline constexpr uint32_t ahbDivider    = 1;
+// inline constexpr uint32_t apb1Divider   = 2;          // APB1 = 36 MHz
+// inline constexpr uint32_t apb2Divider   = 1;
 
 // Clock in effect when prt1 boots. Without a CPU boot: HSI = 8 MHz, all dividers 1 (§13.27).
-constexpr uint32_t sysclkFrequency_Hz = 8'000'000;                      // HSI after reset
-constexpr uint32_t cpuFrequency_MHz   = sysclkFrequency_Hz / 1'000'000;  // backpressure budget only
-constexpr uint32_t apb1Frequency_Hz   = sysclkFrequency_Hz;              // USART2, USART3 BRR
-constexpr uint32_t apb2Frequency_Hz   = sysclkFrequency_Hz;              // USART1 BRR
+inline constexpr uint32_t sysclkFrequency_Hz = 8'000'000;                      // HSI after reset
+inline constexpr uint32_t cpuFrequency_MHz   = sysclkFrequency_Hz / 1'000'000;  // backpressure budget only
+inline constexpr uint32_t apb1Frequency_Hz   = sysclkFrequency_Hz;              // USART2, USART3 BRR
+inline constexpr uint32_t apb2Frequency_Hz   = sysclkFrequency_Hz;              // USART1 BRR
 
 enum class UsartRemap : uint8_t { none, partial, full };   // pins per remap: chip header
-constexpr UsartRemap usart2Remap = UsartRemap::none;       // F103: PA2/PA3
-constexpr UsartRemap usart3Remap = UsartRemap::none;       // F103: PB10/PB11
+inline constexpr UsartRemap usart2Remap = UsartRemap::none;       // F103: PA2/PA3
+inline constexpr UsartRemap usart3Remap = UsartRemap::none;       // F103: PB10/PB11
 
-constexpr UartSettings usart2Settings{115200, 2048, 8, Parity::none, StopBits::one, FlowControl::none};
-constexpr UartSettings usart3Settings{230400, 0,    8, Parity::none, StopBits::one, FlowControl::none};
-                                      // usart2: 2 x 2048 = 4 KB RAM; usart3: bankSize 0 by default, polled
+inline constexpr UartSettings usart2Settings{115200, 2048, 8, Parity::none, StopBits::one, FlowControl::none};
+inline constexpr UartSettings usart3Settings{230400, 0,    8, Parity::none, StopBits::one, FlowControl::none};
+                                             // usart2: 2 x 2048 = 4 KB RAM; usart3: bankSize 0 by default, polled
 
 enum class McSink : uint8_t { usart2, usart3 };     // proposal, §13.20
-constexpr McSink infoTarget     = McSink::usart2;
-constexpr McSink messageTarget = McSink::usart2;
-constexpr McSink errorTarget   = McSink::usart3;
-constexpr McSink fileBackingUsart    = McSink::usart3;
+inline constexpr McSink infoTarget       = McSink::usart2;
+inline constexpr McSink messageTarget    = McSink::usart2;
+inline constexpr McSink errorTarget      = McSink::usart3;
+inline constexpr McSink fileBackingUsart = McSink::usart3;
 
 } // namespace cfg
 ```
@@ -268,16 +293,16 @@ constexpr McSink fileBackingUsart    = McSink::usart3;
 
 namespace cfg {
 
-constexpr bool platformHasColor = true;
+inline constexpr bool platformHasColor = true;
 
 enum class PcSink : uint8_t { console0, file0, file1, file2, file3, file4, file5, file6, file7, file8 };
-constexpr PcSink infoTarget     = PcSink::console0;
-constexpr PcSink messageTarget = PcSink::console0;
-constexpr PcSink errorTarget   = PcSink::file1;   // colour skipped: FileStream
+inline constexpr PcSink infoTarget    = PcSink::console0;
+inline constexpr PcSink messageTarget = PcSink::console0;
+inline constexpr PcSink errorTarget   = PcSink::file1;   // colour skipped: FileStream
 
-constexpr Color infoColor     = darkGray;
-constexpr Color messageColor = darkGreen;
-constexpr Color errorColor   = brightRed;
+inline constexpr Color infoColor    = darkGray;
+inline constexpr Color messageColor = darkGreen;
+inline constexpr Color errorColor   = brightRed;
 
 } // namespace cfg
 ```
@@ -342,14 +367,14 @@ Until `printerInit()` has run, every stream writes to `nullSink` (§4).
 
 - CMake, one configuration per platform (MC / PC), chosen at configure time — same approach as the old project. They are two **configurations**, not two targets in one build tree, because the MC build needs its own compiler (an ARM toolchain file) and a build tree has only one compiler. A `CMakePresets.json` provides `pc` and `mc` presets, which CLion shows as two profiles.
 - User code includes the umbrella header as `"Printer/Printer.hpp"`, so the directory that contains `Printer/` is on the include path.
-- **Library rules in the build (§1.1):** common and MC sources compile with `-nostdinc++`, and the MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources compile without `-nostdinc++`.
+- **Library rules in the build (§1.1):** CMake checks the `#include <...>` lines of every Common and MC source against the allow-list at configure time, and the MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked.
 - `mc_*` / `pc_*` translation units are selected per configuration; polymorphism is link-time (abstract `BaseStream` in common, concrete implementations in `mc_` or `pc_` files).
 - Exact target layout is deferred; the old project's scheme will be reused. Requirement: `Printer` is a self-contained CMake target that links into a new project without pulling in the old `Common/` tree.
 
 ## 12. Testing
 
 - **Two absolutely independent test suites, one per platform** (§13.36). They share no test code, no helpers and no framework.
-  - **PC suite** (`Tests/pc/`): may use everything the PC offers (the standard library, any test framework, files, processes, Windows or Linux APIs). It also tests the common code, compiled for the host. A PC test that proves a common header is clean builds it with `-nostdinc++`.
+  - **PC suite** (`Tests/pc/`): may use everything the PC offers (the standard library, any test framework, files, processes, Windows or Linux APIs). It also tests the common code, compiled for the host. That a common header is clean is shown by the CMake include check (§1.1), not by the test itself.
   - **MC suite** (`Tests/mc/`): does its own job under the §1.1 rules, built and run by its own means.
 - Tests target the new API only. The old `set_sendByte_*_override` hooks are **not** carried over; the new project will have a different test fracture.
 - Recommended hook: a `CaptureStream : BaseStream` that records raw bytes, installed by tests either as a `pInner` on a `Stream` or directly as `prt1.pStream`. No test hook lives inside production `UsartStream` / `ConsoleStream`. Each suite has its own `CaptureStream`.
@@ -377,11 +402,11 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.26 | **HSE start failure is out of Printer scope.** Starting HSE belongs to the optional CPU boot (§13.23). The Printer never starts HSE, so it has no HSE failure path. | Follows from the revised §13.23, 2026‑10‑24 |
 | 13.27 | **Clock check: assert.** BRR and the backpressure budget keep using the `constexpr` `cfg::` frequencies. At boot, the Printer reads the running clock from `RCC->CFGR` and asserts that it matches them. Before each transmission (each line, or each bank swap), it compares `CFGR` with the boot snapshot and asserts on a mismatch. Always on, including release builds (§10). | "assert, we are on a strict MC territory", 2026‑10‑24 |
 | 13.28 | **Boot in the constructor; one umbrella header.** User code is `#include "Printer/Printer.hpp"` plus `Printer prt1 = {};`. The constructor calls `boot()`, which is public and idempotent. `Printer.hpp` declares `extern Printer prt1;`. `pStream` is `nullptr`-safe before construction (§4). Two CMake configurations, PC and MC, via presets (§11). | "single include like `#include "Printer/printer.h"`, CMake supports 2 targets - PC and MC. Printer prt1 = {}; creates Printer instance, (boot in constructor?)" (file name later corrected to `Printer/Printer.hpp`); "Boot in the constructor, with a nullptr-safe pStream and an idempotent boot() – OK", 2026‑10‑24 |
-| 13.29 | **Headers are `.hpp` throughout,** each with a `__cplusplus` guard (§2). | "I'd go with .hpp throughout too", 2026‑10‑24 |
+| 13.29 | **Headers are `.hpp` throughout,** starting with `#pragma once` alone (§2). *Revised 2026‑10‑24:* the `__cplusplus` guard of the first version was dropped; the `.hpp` name already says C++17, not C-compatible. | "I'd go with .hpp throughout too"; then "#pragma once alone works fine for now. .hpp names already says that project is C not compatible, C++ 17 or better", 2026‑10‑24 |
 | 13.30 | **Bare metal only.** No vendor or CMSIS headers; register layouts are written from the reference manual (§2, §10). CMSIS may be named in documentation as an illustration. | "CMSIS – we can use that acronym in documentation for illustration, but now we implement bare metal only", 2026‑10‑24 |
 | 13.32 | **`bankSize` replaces `bufferSize`.** The value is the size of **one** bank, and two banks are created: RAM = 2 × `bankSize`; 0 = polled, no DMA (§7). There is no even-size rule; the minimum is §13.33. `printerMaxDmaBuffer` is renamed `printerMaxBankSize` (≤ 65535, the CNDTR limit). The earlier text (total size, split in two, must be even) is superseded. | "Or result is not divide by 2, but multiply - create 2 buffers of given size. Let's decide"; "B with bankSize – agree", 2026‑10‑24 |
 | 13.33 | **Minimum `bankSize` is 4** (when not 0), enforced by `isValid()` and by a `static_assert` in `UsartStream<N>` (§7). Banks of 1–3 bytes are formally meant to be supported, but they wait until the "head / body / tail" algorithm from the previous project is proven on them (§13.34). | "Formally, minimal bank size 1 must be supported … But I'm not sure that old algorithm … can handle this case correctly … let's say minimal bank size is 4 elements, but we promise to test it somehow later", 2026‑10‑24 |
-| 13.35 | **No C++ standard library and no heap in common and MC code** (§1.1). Only the compiler's freestanding C headers (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, …). No `new` / `malloc`, no exceptions, no RTTI, trivial destructors for globals. Enforced with `-nostdinc++` and an MC link without `_sbrk`. | "MC platform has no operation system and a very poor heap allocator … there is no heap defragmenter. So, using std:: is prohibited", 2026‑10‑24 |
+| 13.35 | **No C++ standard library and no heap in common and MC code** (§1.1). Allowed system headers: `<cstdint>` and the compiler's freestanding C headers (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, …). No `new` / `malloc`, no exceptions, no RTTI, trivial destructors for globals. Enforced with a CMake include allow-list and an MC link without `_sbrk`. *Revised 2026‑10‑24:* `<cstdint>` was added to the allowed headers, so the first version's `-nostdinc++` enforcement (which blocks it) was replaced by the allow-list. | "MC platform has no operation system and a very poor heap allocator … there is no heap defragmenter. So, using std:: is prohibited"; then "I like that: #include <cstdint>, it works fine in similar SIL projects", 2026‑10‑24 |
 | 13.36 | **PC code is free; tests are split per platform.** `pc_*` code may use the standard library, the heap and the OS APIs, as long as nothing PC-specific reaches a header that common code includes (§1.1). Tests are two independent suites, PC and MC (§12). The rules are also written down in `AGENTS.md`. | "PC platform branch can use std:: and feel free on a big developers PC. Tests are separated - absolutely independent suite for each platform. PC tests can use all PC Windows/Linux capabilities. MC tests will do their own job", 2026‑10‑24 |
 
 ### Open items
