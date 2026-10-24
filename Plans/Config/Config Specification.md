@@ -1,6 +1,6 @@
 # Printer Configuration Specification (Draft)
 **Status:** Draft. Companion to [`Config Request.md`](Config%20Request.md) in this folder.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review; 2026‑10‑24: Hardware, chip files, MC boot; CPU boot out of scope; keywords, .hpp, bare metal, constructor boot, clock check)
+**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review; 2026‑10‑24: Hardware, chip files, MC boot; CPU boot out of scope; keywords, .hpp, bare metal, constructor boot, clock check; config in Printer/Config, link-time platform selection)
 
 > The examples in `Config Request.md` are illustrative and predate the decisions below. Where they differ, **this specification is authoritative**.
 >
@@ -17,7 +17,7 @@ The new `Printer` module is a **standalone, portable** subsystem, intentionally 
 
 ### 1.1 Memory and library rules (MC)
 
-The MC has no operating system, very little RAM, and only a poor heap allocator with no defragmentation. Even when free heap is available, allocating anything larger than a byte can't be relied on. So these rules apply to **all common code** (`Config/`, `Printer/` outside `pc_*`) and to **all MC code** (`mc_*`, chip headers), §13.35:
+The MC has no operating system, very little RAM, and only a poor heap allocator with no defragmentation. Even when free heap is available, allocating anything larger than a byte can't be relied on. So these rules apply to **all common code** (`Printer/` outside `pc_*` files, including all of `Printer/Config/`) and to **all MC code** (`mc_*`, chip headers), §13.35:
 
 1. **No C++ standard library, with one exception.** No `std::` facilities and no C++ library headers: not `<array>`, `<new>`, `<type_traits>`, `<algorithm>`, `<iostream>`, and so on. The allowed system headers hold types and macros only, and cost no RAM and no code:
    - `<cstdint>`, the one allowed C++ header (decision 13.35, revised 2026‑10‑24: "it works fine in similar SIL projects");
@@ -33,7 +33,7 @@ The MC has no operating system, very little RAM, and only a poor heap allocator 
 - **An include allow-list,** checked by CMake at configure time. Every `#include <...>` in a Common or MC file must name an allowed header (rule 1), or configuration fails; `CMAKE_CONFIGURE_DEPENDS` re-runs the check whenever such a file changes. This was checked with CMake 4.3.1 on 2026‑10‑24: adding `<array>` to `config.hpp` failed the next build with "`<array>` is not allowed in Common or MC code". It replaces the earlier `-nostdinc++` approach, which would also have blocked `<cstdint>`.
 - The MC link provides no `_sbrk`, so any use of the heap becomes a link error instead of a runtime failure.
 
-**PC-only code** (`pc_*.cpp` files, and headers included only by them) is free to use the full standard library, the heap, exceptions and the OS APIs (Windows, POSIX): the PC is a big developer's machine (§13.36). The boundary is that no `std` type, OS type or PC library header appears in any header that common code includes. A header follows the strictest area of any file that includes it, so `config_pc.hpp` and the PC chip headers follow the common rules. The working rules for each code area are in the repository's `AGENTS.md`.
+**PC-only code** (`pc_*.cpp` files, and headers included only by them) is free to use the full standard library, the heap, exceptions and the OS APIs (Windows, POSIX): the PC is a big developer's machine (§13.36). The boundary is that no `std` type, OS type or PC library header appears in any header that common code includes. A header follows the strictest area of any file that includes it. Shared driver code includes the PC chip headers, so they follow the common rules, and all of `Printer/Config/` (including `config_pc.hpp`) follows them too, so that one include check covers the whole directory. The working rules for each code area are in the repository's `AGENTS.md`.
 
 ## 2. Naming conventions
 
@@ -90,17 +90,22 @@ Instances:
 
 ## 5. Color (lazy)
 
-- **Emission is lazy:** on the first byte written while the stream is **idle** (no colour active), `Stream::sendByteRaw` emits the active colour. A stream is idle after construction, after a target switch away from it, and after `endLine` — so the next line on the same stream re-emits its colour too. When `endLine` is streamed, the printer calls `pStream->resetColor()`, which emits `ESC[0m` if a colour was active and marks the stream idle.
+- **Emission is lazy:** on the first byte written while the stream is **idle** (no colour active), `Stream::sendByteRaw` emits the active colour. A stream is idle after construction, after a target switch away from it, and after `endLine` — so the next line on the same stream re-emits its colour too. When `endLine` is streamed, the printer sends `'\n'` **first** and then calls `pStream->resetColor()`, which emits `ESC[0m` if a colour was active and marks the stream idle (§13.40). The order matters: resetting first would leave the stream idle, so the newline itself would re-emit the colour. A coloured line is therefore `ESC[<sgr>m text \n ESC[0m`.
 - **Mid-line switch:** `prt1 << info << "a" << error << "b" << endLine` calls `resetColor()` on the outgoing stream before re-pointing `pStream`, so no escape leaks across a switch. Then `error` emits its own colour before `"b"`.
 - **`flushDma` never alters colour state.** The operator flushes the DMA unconditionally, wherever it appears. The terminal's colour is unaffected by a flush, so the next byte must **not** re-emit the colour. Only `endLine` (and a mid-line target switch) resets colour.
 - **Colour precedence.** A `Stream` emits colour only when all three hold:
-  1. `cfg::platformHasColor` — compile-time platform capability (`false` on MC, `true` on PC);
+  1. `cfg::platformHasColor` — compile-time platform capability (`false` on MC, `true` on PC). Only platform code reads it: on the MC there is no colour code at all (see "MC never colour" below);
   2. `cfg::useColorDefault` — compile-time project switch; `false` disables colour everywhere, even on PC;
   3. `pInner->allowsAnsi()` — runtime sink capability (`false` for `FileStream`, `UsartStream`, `NullStream`, and for a PC console where VT mode could not be enabled, §9).
 
   The per-stream `Color` (§9) is used only when all three are true.
 - **Files never colour:** `fileN` are `FileStream` instances, not `Stream` wrappers, so they never see colour at all; a `Stream` whose `pInner` is a `FileStream` fails condition 3. This enforces "no coloured prints in files" structurally, not by convention.
-- **MC never colour, at zero cost:** `Stream::sendByteRaw` wraps the colour path in `if constexpr (cfg::platformHasColor && cfg::useColorDefault)`. In `config_mc.hpp`, `platformHasColor = false`, so the colour code and the virtual `allowsAnsi()` call are discarded at compile time. On PC the `allowsAnsi()` check remains a runtime check.
+- **MC never colour, at zero cost** (§13.38, provisional). Common code can't see platform constants (§9), so `if constexpr` on `cfg::platformHasColor` is not available there. Instead, `Stream`'s colour path is chosen at **link time**, like every other platform difference:
+  - `Stream.hpp` / `Stream.cpp` (common) hold the class, `pInner`, the `idle` state and the binding.
+  - `pc_Stream.cpp` defines `Stream::sendByteRaw` and `Stream::resetColor` with the colour logic above.
+  - `mc_Stream.cpp` defines them as plain forwarding: no escape bytes and no `allowsAnsi()` call.
+
+  So the MC binary contains no colour code. On PC, the `allowsAnsi()` check remains a runtime check.
 - Only `Stream` overrides `resetColor()` meaningfully; every other `BaseStream` keeps the no-op default (§3).
 
 ## 6. printf-style output
@@ -161,7 +166,9 @@ file0.close();                                    // flushes and emits END marke
 
 ## 9. Configuration files
 
-Three data-only headers, all in `namespace cfg`, plus one binding entry point. **No assignments at namespace scope** — all configuration is `constexpr` data consumed by `printerInit()` / `printerPlatformInit()`. Common code reaches the platform constants (`cfg::platformHasColor`, …) through one include name that the CMake configuration resolves to `config_mc.hpp` or `config_pc.hpp`; the exact mechanism is deferred with §11.
+Three data-only headers, all in `namespace cfg`, in **`Printer/Config/`** (§13.37): the common `config.hpp`, and the platform-architecture headers `config_pc.hpp` and `config_mc.hpp` (the usual PC / MC capabilities). Chip-specific details live in `Hardware/` instead (§10), with one selection entry per platform (`mc_chip.hpp`, `pc_chip.hpp`). **No assignments at namespace scope**: all configuration is `constexpr` data consumed by `printerInit()` / `printerPlatformInit()`.
+
+**Who includes what** (§13.37). Common `.cpp` files include only common headers, `config.hpp` among them, and never a platform config. Platform-specific `.cpp` files (`pc_*` / `mc_*`) include their own platform config directly. The build selects the `pc_*` or `mc_*` translation units, so the platform difference is resolved by the linker (§11). There is no forwarding header and no platform macro.
 
 The sketches below fix names and types. The values are examples.
 
@@ -368,15 +375,16 @@ Until `printerInit()` has run, every stream writes to `nullSink` (§4).
 - CMake, one configuration per platform (MC / PC), chosen at configure time — same approach as the old project. They are two **configurations**, not two targets in one build tree, because the MC build needs its own compiler (an ARM toolchain file) and a build tree has only one compiler. A `CMakePresets.json` provides `pc` and `mc` presets, which CLion shows as two profiles.
 - User code includes the umbrella header as `"Printer/Printer.hpp"`, so the directory that contains `Printer/` is on the include path.
 - **Library rules in the build (§1.1):** CMake checks the `#include <...>` lines of every Common and MC source against the allow-list at configure time, and the MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked.
-- `mc_*` / `pc_*` translation units are selected per configuration; polymorphism is link-time (abstract `BaseStream` in common, concrete implementations in `mc_` or `pc_` files).
+- `mc_*` / `pc_*` translation units are selected per configuration; polymorphism is link-time (abstract `BaseStream` in common, concrete implementations in `mc_` or `pc_` files). A `pc_X.cpp` and an `mc_X.cpp` may define the same symbols, so a build that compiled both would fail to link. The duplicate-symbol error makes that mistake visible at once.
+- **Other build systems** (IAR, CubeMX-generated projects, …) must follow the same rule when collecting files: an MC project excludes every `pc_*.cpp`, and a PC project excludes every `mc_*.cpp`. The prefix makes this a single file pattern, but it may have to be set up by hand in such tools (§13.37). `pc_*` / `mc_*` headers need no exclusion, because only files of their own platform include them.
 - Exact target layout is deferred; the old project's scheme will be reused. Requirement: `Printer` is a self-contained CMake target that links into a new project without pulling in the old `Common/` tree.
 
 ## 12. Testing
 
 - **Two absolutely independent test suites, one per platform** (§13.36). They share no test code, no helpers and no framework.
-  - **PC suite** (`Tests/pc/`): may use everything the PC offers (the standard library, any test framework, files, processes, Windows or Linux APIs). It also tests the common code, compiled for the host. That a common header is clean is shown by the CMake include check (§1.1), not by the test itself.
+  - **PC suite** (`Tests/pc/`): our own simple suite with no external framework (§13.39); otherwise it may use everything the PC offers (the standard library, files, processes, Windows or Linux APIs). It also tests the common code, compiled for the host. That a common header is clean is shown by the CMake include check (§1.1), not by the test itself.
   - **MC suite** (`Tests/mc/`): does its own job under the §1.1 rules, built and run by its own means.
-- Tests target the new API only. The old `set_sendByte_*_override` hooks are **not** carried over; the new project will have a different test fracture.
+- **Frameworks** (§13.39): the PC suite is our own simple suite, similar to the old project's, run by `ctest`, with no external framework. The MC suite is a brand-new suite, written later with the MC Hardware plan.
 - Recommended hook: a `CaptureStream : BaseStream` that records raw bytes, installed by tests either as a `pInner` on a `Stream` or directly as `prt1.pStream`. No test hook lives inside production `UsartStream` / `ConsoleStream`. Each suite has its own `CaptureStream`.
 - The framework of each suite is chosen in its own plan.
 
@@ -408,6 +416,9 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.33 | **Minimum `bankSize` is 4** (when not 0), enforced by `isValid()` and by a `static_assert` in `UsartStream<N>` (§7). Banks of 1–3 bytes are formally meant to be supported, but they wait until the "head / body / tail" algorithm from the previous project is proven on them (§13.34). | "Formally, minimal bank size 1 must be supported … But I'm not sure that old algorithm … can handle this case correctly … let's say minimal bank size is 4 elements, but we promise to test it somehow later", 2026‑10‑24 |
 | 13.35 | **No C++ standard library and no heap in common and MC code** (§1.1). Allowed system headers: `<cstdint>` and the compiler's freestanding C headers (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, …). No `new` / `malloc`, no exceptions, no RTTI, trivial destructors for globals. Enforced with a CMake include allow-list and an MC link without `_sbrk`. *Revised 2026‑10‑24:* `<cstdint>` was added to the allowed headers, so the first version's `-nostdinc++` enforcement (which blocks it) was replaced by the allow-list. | "MC platform has no operation system and a very poor heap allocator … there is no heap defragmenter. So, using std:: is prohibited"; then "I like that: #include <cstdint>, it works fine in similar SIL projects", 2026‑10‑24 |
 | 13.36 | **PC code is free; tests are split per platform.** `pc_*` code may use the standard library, the heap and the OS APIs, as long as nothing PC-specific reaches a header that common code includes (§1.1). Tests are two independent suites, PC and MC (§12). The rules are also written down in `AGENTS.md`. | "PC platform branch can use std:: and feel free on a big developers PC. Tests are separated - absolutely independent suite for each platform. PC tests can use all PC Windows/Linux capabilities. MC tests will do their own job", 2026‑10‑24 |
+| 13.37 | **Config location and platform selection.** All config headers live in `Printer/Config/`: the common `config.hpp`, and the platform-architecture `config_pc.hpp` / `config_mc.hpp`. Chip specifics live in `Hardware/`, with one selection entry per platform. Common `.cpp` files include only common headers. Platform `.cpp` files are selected by `CMakeLists.txt`, so the platform difference is resolved by the linker. Non-CMake projects (IAR, CubeMX) exclude the other platform's prefixed `.cpp` files, possibly by hand (§9, §11). This supersedes base plan decisions D-1 (`Config/` outside the library) and D-2 (`config_platform.hpp` forwarders). | "common cross-platform config can be placed in the Printer/Config. Target Platform architecture-specific (usual PC/MC capabilities) - in this directory too. Easy to find. But once included hardware-specifics live in Hardware directory"; "common .cpp uses common headers. Platform-specific .cpp are selected by CMakeLists.txt - polymorphism at linker level. If we will use IAR or CubeMX projects - the projects must ignore pc_ prefixed .cpp when collecting project files. Maybe, it has to be done manually", 2026‑10‑24 |
+| 13.39 | **Test suites:** the PC suite is our own simple suite, similar to the old project's, run by `ctest`, with no external framework. The MC suite is a brand-new suite, written later (§12). This is base plan D-3, and it settles handoff P-10. | "mostly agree. For PC we will write own simple suite similar to the old one. For MC we will write brand-new test suite later", 2026‑10‑24 |
+| 13.40 | **`endLine` sends `'\n'` first, then resets the colour** (§5), so a coloured line is `ESC[<sgr>m text \n ESC[0m`. The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan. This is base plan D-5. | "agree", 2026‑10‑24 |
 
 ### Open items
 
@@ -435,3 +446,9 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 - **13.25** **The two boot functions.** The entry point is decided (§13.28): the `Printer` constructor calls the idempotent `boot()`, which runs `printerPlatformInit()` and then `printerInit()` (§9). Still to decide: should the two free functions stay public (for tests and for projects without `prt1`), or become private to `boot()`? And should `printerPlatformInit()` be renamed to match, e.g. `bootPlatform()` (this also answers §13.11)?
 - **13.31** **Startup code and the CPU-boot hook.** Bare metal (§13.30) needs a vector table and a `Reset_Handler` that copies `.data`, clears `.bss`, runs the global constructors and calls `main()`. Who provides it: the Printer project, or the host project? It is the one place that can guarantee "CPU boot before `prt1`'s constructor" (§10). Proposal: the Printer project ships a startup file for each MC chip. Its `Reset_Handler` calls an optional weak `cpuBoot()` before the global constructors. A small CPU-boot example (72 MHz, flash latency first) defines `cpuBoot()` and shows `cfg::sysclkFrequency_Hz` / `cpuFrequency_MHz` being updated to match; the running clock check (§13.27) catches a mismatch. Decide.
 - **13.34** **Bank sizes 1–3: the promised test.** Before `printerMinBankSize` can drop below 4, the DMA bank algorithm needs edge-case tests on the PC register model (§10), for `bankSize` = 1, 2, 3 and 4. They must cover: a write that exactly fills a bank; a write one byte longer than a bank; a swap while DMA is still busy (backpressure and drop); `updateUsartX()` on a partly filled bank; and the "head", "body" and "tail" states each being empty. The tests belong to the MC Hardware plan. If they pass, the minimum drops to 1; if not, the algorithm is fixed first or the minimum stays. Open until the tests run.
+- **13.38** **`Stream`'s colour path per platform.** It follows from §13.37: common code can't see `cfg::platformHasColor`, so the earlier `if constexpr` in common code is gone. This draft splits `Stream`:
+  - `Stream.cpp` (common) holds the class, `pInner`, the idle state and the binding;
+  - `pc_Stream.cpp` holds the colour emission;
+  - `mc_Stream.cpp` holds plain forwarding, so the MC has no colour code (§5).
+
+  The alternative is to keep one common `Stream.cpp` and decide at run time only, through `allowsAnsi()`, which returns `false` on every MC sink. That is simpler, but it puts a small amount of unused colour code and one virtual call per line into the MC binary. Confirm the split, or choose the run-time-only version.

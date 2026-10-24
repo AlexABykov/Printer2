@@ -1,12 +1,12 @@
-# Phase 1 Plan — `Config/config.hpp` (common configuration)
+# Phase 1 Plan — `Printer/Config/config.hpp` (common configuration)
 **Status:** Draft, awaiting BY's approval.  
-**Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only; CMake limited to the `Config/` include path, include check and test target moved to Phase 2)  
+**Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only; include check and test target moved to Phase 2; config moved to `Printer/Config/`, so no CMake change at all)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 1 (and the remainder of Phase 0, §2 below)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §2, §5, §7, §8, §9 (`config.hpp`), §13.13, §13.29, §13.32, §13.33, §13.35  
 **Rules:** [`AGENTS.md`](../../AGENTS.md) §2 (MC and Common code)
 
 > **Build status (2026‑10‑24).** Nothing is changed in the repository yet. The header and both test files below were **built and run in a scratch directory outside the repository**, extracted from this document's code blocks:
-> - The demo was built through CMake 4.3.1 ("MinGW Makefiles"), with the one `CMakeLists.txt` change from §4.
+> - The demo was built through CMake 4.3.1 ("MinGW Makefiles") with today's `CMakeLists.txt`, unchanged (§4).
 > - The checks were compiled by hand with `g++.exe (GCC) 15.2.0` from CLion's bundled MinGW, using the §3.3 command (`-std=c++17 -Wall -Wextra -Wpedantic -Werror`).
 >
 > Results: `printer_2.exe` and `config_common_check.exe` both exited 0, and `config.hpp` includes only `<cstdint>`.
@@ -21,11 +21,11 @@ Write the common configuration header exactly once, so the later phases only inc
 - contain data only (`namespace cfg`, `inline constexpr`);
 - reject invalid UART settings at compile time, where they are written.
 
-The build system changes only as far as the moved header requires. The include allow-list check and the test target arrive with Phase 2, which rebuilds `CMakeLists.txt` anyway.
+The build system does not change in this phase. The include allow-list check and the test target arrive with Phase 2, which rebuilds `CMakeLists.txt` anyway.
 
 **Done when:**
-- [ ] `Config/config.hpp` exists with the content in §3.1.
-- [ ] `CMakeLists.txt` differs from today's file only by the `Config/` include directory (§4).
+- [ ] `Printer/Config/config.hpp` exists with the content in §3.1.
+- [ ] `CMakeLists.txt` is unchanged (§4).
 - [ ] The demo `printer_2` builds through CMake and exits 0.
 - [ ] The checks compile by hand with the §3.3 command, every `static_assert` in `Tests/pc/test_config_common.cpp` holds, and `config_common_check.exe` exits 0 (one `cfg::defaultFileName` across two translation units).
 - [ ] `config.hpp`'s only `#include <...>` is `<cstdint>` (manual check, §3.3).
@@ -35,19 +35,18 @@ The build system changes only as far as the moved header requires. The include a
 
 The repository is further along than the base plan and handoff say. `config.h` is **already empty**, and `main()` already lives in `main.cpp`, which only includes `config.h`. So base-plan Phase 0 step 1 is already done. What remains:
 
-1. `git mv config.h Config/config.hpp`. The header content is written in step 3.1.
-2. In `main.cpp`, change `#include "config.h"` to `#include "config.hpp"`.
-3. In `CMakeLists.txt`, add `${CMAKE_CURRENT_SOURCE_DIR}/Config` to `printer_2`'s include directories (§4).
-4. Add `.gitignore` with `.idea/`, `cmake-build-*/`, `build/` and `*.exe`. This also stops `main.exe` (currently untracked in the root) from showing up.
-5. Build; `printer_2` exits 0.
+1. `git mv config.h Printer/Config/config.hpp`. The header content is written in step 3.1.
+2. In `main.cpp`, change `#include "config.h"` to `#include "Printer/Config/config.hpp"`. The repository root is already on the include path, so `CMakeLists.txt` does not change (§4).
+3. Add `.gitignore` with `.idea/`, `cmake-build-*/`, `build/` and `*.exe`. This also stops `main.exe` (currently untracked in the root) from showing up.
+4. Build; `printer_2` exits 0.
 
-**Proposed commit:** "Phase 0: move config header to Config/config.hpp, add .gitignore". Doing Phase 0 as its own commit keeps the history readable. Merging it into the Phase 1 commit also works, if BY prefers.
+**Proposed commit:** "Phase 0: move config header to Printer/Config/config.hpp, add .gitignore". Doing Phase 0 as its own commit keeps the history readable. Merging it into the Phase 1 commit also works, if BY prefers.
 
 The base plan's build-status note ("`config.h` still holds the `main()` stub") and the same remark in the 2026‑10‑24 handoff entry are out of date. The handoff should get a dated correction note in the Phase 1 entry (house rule 7), and the base plan's note can simply be updated.
 
 ## 3. Steps
 
-### 3.1 Write `Config/config.hpp`
+### 3.1 Write `Printer/Config/config.hpp`
 
 This is the content built in the scratch check. Spec §9 shows the same code (§5).
 
@@ -125,7 +124,7 @@ Notes on the code:
 // Phase 1 check: config.hpp compiles alone, and its constants and isValid() behave as specified.
 // Everything here is a static_assert, except the single-address check in main().
 
-#include "config.hpp"
+#include "Printer/Config/config.hpp"
 
 namespace {
 
@@ -190,7 +189,7 @@ const char* const* defaultFileNameAddressHere() { return &cfg::defaultFileName; 
 // Phase 1 check, second translation unit: inline constexpr gives one cfg::defaultFileName for
 // the whole program, so its address is the same in both translation units.
 
-#include "config.hpp"
+#include "Printer/Config/config.hpp"
 
 const char* const* defaultFileNameAddressHere();
 
@@ -212,13 +211,13 @@ cmake --build build
 build/printer_2.exe                                   # expect exit 0
 
 # Checks, compiled by hand (no CMake target until Phase 2)
-g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -IConfig \
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I. \
     Tests/pc/test_config_common.cpp Tests/pc/test_config_common_main.cpp \
     -o build/config_common_check.exe
 build/config_common_check.exe                         # expect exit 0
 
 # Include check, by hand (automated in Phase 2)
-grep -n '#include <' Config/config.hpp                # expect only <cstdint>
+grep -n '#include <' Printer/Config/config.hpp     # expect only <cstdint>
 ```
 
 The check binary lands in `build/`, which `.gitignore` excludes.
@@ -226,20 +225,13 @@ The check binary lands in `build/`, which `.gitignore` excludes.
 ### 3.4 Record and commit
 
 - Add a mailbox entry to `_ProjectHandOff.md`: compiler and version, commands, exit codes, and the dated correction about `config.h` (§2).
-- **Proposed commit:** "Phase 1: common config header Config/config.hpp with compile-time checks". It contains `Config/config.hpp` and the two `Tests/pc/` files; `CMakeLists.txt` already changed in the Phase 0 commit.
+- **Proposed commit:** "Phase 1: common config header Printer/Config/config.hpp with compile-time checks". It contains `Printer/Config/config.hpp` and the two `Tests/pc/` files.
 
-## 4. CMake change
+## 4. CMake
 
-One change, needed because the header moves into `Config/`: `main.cpp` must still find it. The rest of today's `CMakeLists.txt` stays as it is.
+**No change.** The header moves to `Printer/Config/config.hpp`, and the repository root is already on `printer_2`'s include path (`target_include_directories(printer_2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})`). So `main.cpp` and the tests include it as `"Printer/Config/config.hpp"`, the same way user code will include `"Printer/Printer.hpp"` (spec §11, §13.37).
 
-```cmake
-target_include_directories(printer_2 PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/Config
-)
-```
-
-This belongs to the Phase 0 remainder (§2 step 3). It is the only `CMakeLists.txt` edit before Phase 2. The include allow-list check (`printer_check_includes`) and the test target are specified, already tested, in the base plan's Phase 2.
+`CMakeLists.txt` stays exactly as it is until Phase 2. The include allow-list check (`printer_check_includes`) and the test target are specified, already tested, in the base plan's Phase 2.
 
 ## 5. Agreed with BY (2026‑10‑24), and questions
 
@@ -251,7 +243,7 @@ The earlier deviations from the spec sketch were settled as follows, and spec §
 | `<stdint.h>` vs `<cstdint>` | `<cstdint>`, types unqualified. "It works fine in similar SIL projects." Enforcement is an include allow-list (Phase 2) instead of `-nostdinc++` |
 | `__cplusplus` guard | Dropped: `#pragma once` alone; the `.hpp` name says C++17, not C-compatible |
 | `isValid()` and the three `static_assert`s | Added to `config.hpp` and to the spec sketch |
-| CMake in Phase 1 | Only the `Config/` include path; the include check and the test target move to Phase 2 |
+| CMake in Phase 1 | No change: the config lives in `Printer/Config/`, and the repository root is already on the include path; the include check and the test target move to Phase 2 |
 
 **Questions** (each has a provisional answer, already used in the code):
 
@@ -276,6 +268,6 @@ The earlier deviations from the spec sketch were settled as follows, and spec §
 
 Phase 2 of the base plan:
 - the `PRINTER_PLATFORM` switch and `CMakePresets.json` (`pc`, `mc`);
-- `config_platform.hpp` selection and the `printer` library target;
+- link-time platform selection (`pc_*` or `mc_*` sources) and the `printer` library target;
 - the include allow-list check (`printer_check_includes`) over every Common and MC source;
 - `printer_tests` (PC suite) under `ctest`, which picks up the two Phase 1 test files.

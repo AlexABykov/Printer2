@@ -1,6 +1,6 @@
 # Config Base Plan — first implementation slice
 **Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4; no C++ library in common/MC code; separate PC and MC test suites)  
+**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4; no C++ library in common/MC code; separate PC and MC test suites; config in Printer/Config, link-time platform selection)  
 **Implements:** [`Config Specification.md`](Config%20Specification.md) §9 (configuration), plus the minimum of §§3–5, §10 and §11 needed to prove it end to end.  
 **Request:** [`Config Request.md`](Config%20Request.md) (Status: Discussion)
 
@@ -34,7 +34,7 @@ This follows handoff house rule 1 (**PC first**): the configuration and binding 
 
 **In scope**
 - `config.hpp`, `config_pc.hpp`, `config_mc.hpp` as specified in spec §9, with compile-time self-checks.
-- The `config_platform.hpp` selection mechanism (D-2), a CMake platform switch, and `CMakePresets.json` with `pc` and `mc` presets (spec §11).
+- Link-time platform selection: CMake builds the `pc_*` or the `mc_*` sources (spec §9, §11, §13.37). Also a CMake platform switch, and `CMakePresets.json` with `pc` and `mc` presets.
 - The minimal stream core the binding needs: `BaseStream`, `NullStream`, `Stream` (lazy colour, §5), `ConsoleStream`, and PC `FileStream` (open/close/write only).
 - `Hardware/PrinterInit.hpp` and `Hardware/pc_PrinterInit.cpp`: the PC boot (VT mode) and the PC binding.
 - A minimal `Printer`, just enough for the program above: the constructor calls an idempotent `boot()`, plus a `nullptr`-safe `pStream`, target switching, `const char*` insertion and `endLine`.
@@ -59,17 +59,17 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
 ├── CMakeLists.txt               # library + demo + tests, PRINTER_PLATFORM switch
 ├── CMakePresets.json            # pc, mc
 ├── main.cpp                     # demo: the program in §1
-├── Config/                      # project-owned configuration (D-1)
-│   ├── config.hpp               # common, spec §9
-│   ├── config_pc.hpp
-│   ├── config_mc.hpp            # choices only, no vendor headers
-│   ├── pc/config_platform.hpp   # one line: #include "config_pc.hpp"   (D-2)
-│   └── mc/config_platform.hpp   # one line: #include "config_mc.hpp"
-├── Printer/                     # library, common code
+├── Printer/                     # library
+│   ├── Config/                  # all config headers, spec §9, §13.37
+│   │   ├── config.hpp           # common; the only config common code includes
+│   │   ├── config_pc.hpp        # PC architecture; included only by pc_* files
+│   │   └── config_mc.hpp        # MC architecture, choices only; included only by mc_* files
 │   ├── Printer.hpp / .cpp       # umbrella header; minimal Printer, endLine
 │   ├── BaseStream.hpp
 │   ├── NullStream.hpp / .cpp    # nullSink
-│   ├── Stream.hpp / .cpp        # lazy colour; info, message, error
+│   ├── Stream.hpp / .cpp        # info, message, error; pInner, idle state, binding
+│   ├── pc_Stream.cpp            # colour emission (spec §5, §13.38)
+│   ├── mc_Stream.cpp            # (MC Hardware plan) plain forwarding, no colour
 │   ├── FileStream.hpp           # file0..file8 declarations
 │   ├── pc_FileStream.cpp
 │   └── pc_ConsoleStream.hpp / .cpp   # console0
@@ -85,7 +85,7 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
 └── Tests/
     ├── pc/                      # PC suite (spec §12): free to use the PC; tests Common code too
     │   ├── CaptureStream.hpp
-    │   ├── test_main.cpp        # PC suite runner (D-3); defines the tests' prt1
+    │   ├── test_main.cpp        # own simple PC suite runner (D-3); defines the tests' prt1
     │   ├── test_config_common.cpp
     │   ├── test_binding_pc.cpp
     │   ├── test_color.cpp
@@ -102,25 +102,25 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 
 ### Phase 0 — Repository preparation
 1. Move `main()` from the root `config.h` into `main.cpp` (resolves handoff P-12 in favour of "keep the config header as compile-time config").
-2. `git mv config.h Config/config.hpp` (now holding only `#pragma once`), and point the include path at `Config/`.
+2. `git mv config.h Printer/Config/config.hpp` (now holding only `#pragma once`), and change `main.cpp` to `#include "Printer/Config/config.hpp"`. The repository root is already on `printer_2`'s include path, so `CMakeLists.txt` does not change.
 3. Add `.gitignore` for `.idea/`, `cmake-build-*/`, `build/`, `*.exe`. (`main.exe` is currently untracked in the root.)
 4. Build with MinGW 15.2: `cmake -S . -B build && cmake --build build`.
 
 **Done when:** the empty demo builds and runs with exit code 0, and `git status` shows no build artefacts.
 
-### Phase 1 — `Config/config.hpp` (common)
+### Phase 1 — `Printer/Config/config.hpp` (common)
 1. Write the header as specified in spec §9: feature flags, `Color` + 16 presets, `Parity` / `StopBits` / `FlowControl`, `UartSettings` (with `bankSize`, spec §7), `uartDefault`, `printerMinBankSize` (4), `printerMaxBankSize`, `defaultFileName`.
 2. Declare the constants `inline constexpr` (C++17), as the spec sketches now do. Plain `constexpr` at namespace scope gives each translation unit its own copy; `inline` gives `defaultFileName` one address everywhere.
 3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<cstdint>` (spec §1.1).
 
-**Done when:** `Tests/pc/test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles by hand with `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror`. It `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`. `config.hpp`'s only system include is `<cstdint>` (manual check). The only `CMakeLists.txt` change is the `Config/` include path, from Phase 0; the include check and the test target come with Phase 2. The detailed plan is `Phase 1 plan.md`.
+**Done when:** `Tests/pc/test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles by hand with `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror`. It `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`. `config.hpp`'s only system include is `<cstdint>` (manual check). `CMakeLists.txt` does not change in Phase 1 (the repository root is already on the include path); the include check and the test target come with Phase 2. The detailed plan is `Phase 1 plan.md`.
 
 ### Phase 2 — Platform selection and CMake
 1. `PRINTER_PLATFORM` cache variable, `PC` (default) or `MC`. Configuring with any other value is an error.
 2. `CMakePresets.json` with a `pc` preset (MinGW, `PRINTER_PLATFORM=PC`) and an `mc` preset (`PRINTER_PLATFORM=MC` with an ARM toolchain file). They are two configurations, not two targets, because each needs its own compiler (spec §11).
-3. Selection mechanism (D-2): CMake adds `Config/pc/` or `Config/mc/` to the include path. Common code includes only `"config_platform.hpp"`, which forwards to the platform header. No macros are needed, which matches spec §2's preference for avoiding `#if`.
+3. **Link-time platform selection** (spec §9, §11, §13.37). CMake builds the common sources plus either all `pc_*.cpp` or all `mc_*.cpp` files. Common `.cpp` files include only common headers (`Printer/Config/config.hpp` among them); `pc_*` / `mc_*` files include their own platform config directly. There is no forwarding header and no platform macro. Building both prefixes at once would fail to link with duplicate symbols, which is the intended guard.
 4. Targets:
-   - `printer`: static library with `Printer/` + `Hardware/` sources for the platform (`pc_*` or `mc_*`). Its public include dirs are the repository root (for `"Printer/Printer.hpp"` and `"Hardware/..."`), `Config/` and `Config/<platform>/`.
+   - `printer`: static library with the common `Printer/` and `Hardware/` sources plus the platform's prefixed sources (`pc_*` or `mc_*`). Its only public include dir is the repository root, so every include is written from there: `"Printer/Printer.hpp"`, `"Printer/Config/config.hpp"`, `"Hardware/PrinterInit.hpp"`.
    - `printer_2`: the demo; links `printer`.
    - `printer_tests`: the **PC suite** (`Tests/pc/`), registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`. The MC suite (`Tests/mc/`) is independent and belongs to the MC Hardware plan (spec §12).
    - `config_mc_check`: compile-only object library for Phase 6, part of the PC suite; never linked. It checks `config_mc.hpp`, which is a Common-area file (`AGENTS.md` §1).
@@ -150,21 +150,23 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 
 **Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <array>` in a common file fails the build (manual check, then reverted).
 
-### Phase 3 — `Config/config_pc.hpp`
+### Phase 3 — `Printer/Config/config_pc.hpp`
 1. As in spec §9: `platformHasColor = true`, the `PcSink` enum, `infoTarget` / `messageTarget` / `errorTarget`, and `infoColor` / `messageColor` / `errorColor`. Function declarations live in `Hardware/PrinterInit.hpp`, not here, so the config stays data-only.
 2. `static_assert` that each role target is a valid `PcSink` value (guards against a future enum edit).
 
-**Done when:** `config_platform.hpp` resolves to it in the PC build and Phase 1's test still passes.
+**Done when:** `pc_*` files that need it include it directly, no common file includes it, and Phase 1's test still passes.
 
 ### Phase 4 — Minimal stream core
 Only what the binding and colour rules need.
 
 1. **`BaseStream`** (§3): pure virtual `sendByteRaw(uint8_t)` and `flush()`; `allowsAnsi()` returns `false` by default; `resetColor()` is a no-op by default. `printf` is **not** added in this slice. No virtual destructor (globals are never deleted through a base pointer), so the destructor stays trivial.
 2. **`NullStream nullSink`**: drops bytes; `constexpr` constructor.
-3. **`Stream`**, with the globals `info`, `message` and `error`: `BaseStream* pInner` defaults to `&nullSink` through a `constexpr` constructor, so the three globals are constant-initialized (§4). Each holds a `Color color` and an `idle` flag. `sendByteRaw` implements §5:
-   - `if constexpr (cfg::platformHasColor && cfg::useColorDefault)`, then `if (idle && pInner->allowsAnsi())`: emit `ESC[<sgr>m` and clear `idle`. Then forward the byte.
-   - `resetColor()`: if a colour is active, emit `ESC[0m`. Mark the stream idle either way.
-   - `flush()` forwards to `pInner` and does not touch colour state (§5, §13.9).
+3. **`Stream`**, with the globals `info`, `message` and `error`: `BaseStream* pInner` defaults to `&nullSink` through a `constexpr` constructor, so the three globals are constant-initialized (§4). Each holds a `Color color` and an `idle` flag. The class is split by platform:
+   - `Stream.hpp` / `Stream.cpp` (common): the class, the globals, `pInner`, `color`, the `idle` flag, and `flush()`, which forwards to `pInner` and does not touch colour state (§5, §13.9).
+   - `pc_Stream.cpp` defines `sendByteRaw` and `resetColor` (spec §5, §13.38):
+     - `sendByteRaw`: if `cfg::useColorDefault && idle && pInner->allowsAnsi()`, emit `ESC[<sgr>m` and clear `idle`. Then forward the byte.
+     - `resetColor()`: if a colour is active, emit `ESC[0m`. Mark the stream idle either way.
+   - `mc_Stream.cpp` (MC Hardware plan) defines both as plain forwarding with no colour.
 4. **`ConsoleStream console0`**: writes to `std::cout`. `allowsAnsi()` returns a flag that `printerPlatformInit()` sets (false until then).
 5. **PC `FileStream file0..file8`**: `open(name, OpenMode = append)`, `close()`, `sendByteRaw`, `flush`; `allowsAnsi()` is always false. A write while closed is dropped (provisional, pending §13.17). There are no markers yet (§13.2), and `name` is a public field (§13.19).
    - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `file0..file8` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. A `std::ofstream` member would also put `<fstream>` into the common `FileStream.hpp`, which the library rules forbid (spec §1.1). So the nine `std::ofstream` objects live in a **function-local** static array inside `pc_FileStream.cpp`, constructed on the first `open()`. A namespace-scope array would be initialized at run time, which brings the initialization-order problem back. `FileStream` holds only its index and an `isOpen` flag, and it doesn't touch the array while closed. That keeps its constructor `constexpr` and its header free of the standard library. The function-local static is allowed here because §1.1 rule 5 applies to common and MC code, not to `pc_*` files. See D-4.
@@ -203,7 +205,7 @@ Only what the binding and colour rules need.
 - Each test restores the bindings it changed.
 - Manual check, recorded in the handoff: running `printer_2` in a Windows 10 console shows "Hello Printer 2!" in dark green, and no raw `ESC[` text.
 
-### Phase 6 — `Config/config_mc.hpp` and host compile-check
+### Phase 6 — `Printer/Config/config_mc.hpp` and host compile-check
 1. Write the header as in spec §9. It holds choices only:
    - `hseFrequency_Hz`, which is informational. The PLL and divider lines are commented out, because they belong to the optional CPU boot (spec §13.23).
    - `sysclkFrequency_Hz`, the clock in effect (HSI 8 MHz), and the derived `cpuFrequency_MHz` / `apb1Frequency_Hz` / `apb2Frequency_Hz`.
@@ -212,7 +214,7 @@ Only what the binding and colour rules need.
    - `McSink` with the role targets.
 
    Add `static_assert(isValid(usartNSettings))`.
-2. `test_config_mc_host.cpp` includes `config_mc.hpp` **directly** (not via `config_platform.hpp`). It is built as a separate **compile-only** CMake target (`config_mc_check`, an object library that nothing links), not as part of `printer_tests`. The `cfg` constants are `inline constexpr`, so linking MC and PC definitions into one executable would break the one-definition rule.
+2. `test_config_mc_host.cpp` includes `Printer/Config/config_mc.hpp` directly, as every MC file will. It is built as a separate **compile-only** CMake target (`config_mc_check`, an object library that nothing links), not as part of `printer_tests`. The `cfg` constants are `inline constexpr`, so linking MC and PC definitions into one executable would break the one-definition rule.
 
 **Done when** the check compiles and these `static_assert`s hold:
 - `cfg::sysclkFrequency_Hz == 8'000'000`, `cfg::cpuFrequency_MHz == 8`, `cfg::apb1Frequency_Hz == 8'000'000` and `cfg::apb2Frequency_Hz == 8'000'000`: the F103 reset clock (HSI, all dividers at 1), with no CPU boot.
@@ -221,17 +223,17 @@ Only what the binding and colour rules need.
 
 **Limit:** this proves that `config_mc.hpp` is self-contained and that the derived frequencies match the reset clock. Checking them against the silicon limits (APB1 ≤ 36 MHz, SYSCLK ≤ 72 MHz) is the chip header's job, and checking them against the running clock is the clock check's job (spec §10, §13.27). Both arrive with the MC Hardware plan.
 
-## 5. Decisions needed from BY
+## 5. Decisions
 
-New decisions this plan introduces. Each has a provisional default so work can start; none is decided except where marked.
+Decisions this plan introduced. All five are now decided by BY; the provisional defaults they replaced are noted where they differ.
 
-| ID | Question | Provisional default |
+| ID | Question | Decision |
 |---|---|---|
-| D-1 | Where do the config headers live: `Config/` (project-owned, outside the library) or `Printer/Config/` (shipped with the library)? | `Config/`. A host project supplies its own config, and the `printer` target takes the directory from a CMake variable `PRINTER_CONFIG_DIR` (default `${CMAKE_SOURCE_DIR}/Config`) |
-| D-2 | How does common code find the platform header? | Include-path selection of `config_platform.hpp` (kept by BY, 2026‑10‑24) |
-| D-3 | PC suite framework (handoff P-10) | Assert-based runner with no external dependency, registered with `ctest`. The PC suite may use any framework (spec §12), so Catch2 or GoogleTest is also an option. The MC suite chooses its own in the MC Hardware plan |
-| D-4 | PC `FileStream`'s `ofstream` storage | A function-local static array of nine `std::ofstream` in `pc_FileStream.cpp`, constructed on first `open()`; `FileStream` holds an index and an `isOpen` flag. This keeps constant initialization (spec §4) and keeps `<fstream>` out of the common header (spec §1.1). Revised 2026‑10‑24: the earlier "aligned storage + placement-new" would have needed `<new>` |
-| D-5 | The bytes `endLine` emits, and their order | `'\n'` first, then `resetColor()`. Resetting first would leave the stream idle, so the newline would re-emit the colour (§5). The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan |
+| D-1 | Where do the config headers live? | **Decided by BY, 2026‑10‑24 (spec §13.37):** `Printer/Config/` holds the common `config.hpp` and the platform-architecture `config_pc.hpp` / `config_mc.hpp`; chip specifics live in `Hardware/`. Supersedes the earlier default `Config/` outside the library |
+| D-2 | How does common code find the platform header? | **Decided by BY, 2026‑10‑24 (spec §13.37):** it doesn't. Common `.cpp` files include only common headers; platform `.cpp` files are selected by CMake (link-time polymorphism). Supersedes the `config_platform.hpp` forwarders |
+| D-3 | Test suites and frameworks (handoff P-10) | **Decided by BY, 2026‑10‑24 (spec §13.39):** the PC suite is our own simple suite, similar to the old project's, registered with `ctest`; no external framework (Catch2 / GoogleTest are not used). The MC suite is a brand-new suite, written later in the MC Hardware plan. BY's wording: "mostly agree. For PC we will write own simple suite similar to the old one. For MC we will write brand-new test suite later" |
+| D-4 | PC `FileStream`'s `ofstream` storage | **Decided by BY, 2026‑10‑24 ("agree"):** a function-local static array of nine `std::ofstream` in `pc_FileStream.cpp`, constructed on first `open()`; `FileStream` holds an index and an `isOpen` flag. This keeps constant initialization (spec §4) and keeps `<fstream>` out of the common header (spec §1.1). Revised earlier the same day: the first proposal, "aligned storage + placement-new", would have needed `<new>` |
+| D-5 | The bytes `endLine` emits, and their order | **Decided by BY, 2026‑10‑24 ("agree", spec §13.40):** `'\n'` first, then `resetColor()`. Resetting first would leave the stream idle, so the newline would re-emit the colour (§5). The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan |
 
 ## 6. Spec open items adopted provisionally by this plan
 
@@ -258,7 +260,7 @@ The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot
 - **Constant initialization of the streams** (§4). This depends on every stream type having a `constexpr` constructor and on `nullSink` being constant-initialized. GCC has no `-Wglobal-constructors` and C++17 has no `constinit`, so the check is test B1 plus a code-review rule: no stream type may have a member with a non-`constexpr` constructor (D-4).
 - **`prt1` is dynamically initialized** by design: its constructor boots. The `nullptr` guard (P3) covers a `Printer` that hasn't been bound, not a `prt1` used before its own constructor. That case is undefined behaviour and stays a documented rule (spec §4).
 - **Construction order across translation units.** `prt1`'s constructor binds streams that live in other translation units. This is safe only because those streams are constant-initialized (they exist before any constructor runs), which is the same rule as the first risk.
-- **`if constexpr` in common code** requires every common TU that uses `Stream` to see `config_platform.hpp`. Including it from `Stream.hpp` keeps that automatic.
+- **A common file including a platform config** would compile on one platform and break the other. Phase 2's include check sees only `<...>` system includes, so this is a code-review rule: no file without a `pc_` / `mc_` prefix includes `config_pc.hpp` or `config_mc.hpp`.
 - **`std::cout` vs Windows VT mode.** VT processing applies to the console handle, so `std::cout` output picks it up. `std::cout` is used from `prt1`'s constructor, which libstdc++ supports because it initializes the standard streams before user globals. Phase 5's manual check confirms both, since `ctest` cannot (stdout is a pipe there).
 - **Toolchain on the PATH.** Builds run via CLion or with MinGW 15.2's `bin/` added. Each handoff entry should name the compiler and the result (handoff house rule 5).
 

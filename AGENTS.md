@@ -17,17 +17,25 @@ Every source file belongs to exactly one area. The area decides which rules appl
 
 | Area | Where | Rules |
 |---|---|---|
-| **Common** | All of `Config/` (including `config_pc.hpp`, `config_mc.hpp`, `pc/` and `mc/`); `Printer/` and `Hardware/` files without a `pc_` / `mc_` prefix; `*_regs.hpp` | §2: MC and Common rules |
+| **Common** | All of `Printer/Config/` (`config.hpp`, and also `config_pc.hpp` / `config_mc.hpp`, so that one include check covers the directory); `Printer/` and `Hardware/` files without a `pc_` / `mc_` prefix; `*_regs.hpp` | §2: MC and Common rules |
 | **MC** | `mc_*` files, including `mc_chip.hpp` and `mc_<chip>.hpp` | §2: MC and Common rules |
 | **PC** | `pc_*.cpp` files; `pc_*` headers included **only** by `pc_*.cpp` files | §3: PC rules |
 | **PC tests** | `Tests/pc/` | §4: Tests |
 | **MC tests** | `Tests/mc/` | §4: Tests |
 
 **A header follows the strictest area of any file that includes it.** For example:
-- Common code includes `config_platform.hpp`, which forwards to `config_pc.hpp` on the PC, so `config_pc.hpp` follows the Common rules.
-- Shared driver code includes `pc_chip.hpp` and `pc_<chip>.hpp` on the PC, so those follow the Common rules too.
+- Shared driver code includes `pc_chip.hpp` and `pc_<chip>.hpp` on the PC, so those follow the Common rules.
+- `config_pc.hpp` is included only by `pc_*` files, but it lives in `Printer/Config/` and stays data-only under the Common rules, like the rest of that directory.
 
 In practice, only `pc_*.cpp` files (and headers private to them) are really free.
+
+### 1.1 Who includes what, and how a platform is selected
+
+- **Common `.cpp` files include only common headers**: `Printer/Config/config.hpp`, never `config_pc.hpp` or `config_mc.hpp`.
+- **Platform `.cpp` files** (`pc_*`, `mc_*`) include their own platform config and chip selection (`pc_chip.hpp` / `mc_chip.hpp`) directly.
+- **The platform is selected by the build, not by macros.** `CMakeLists.txt` compiles the common files plus either every `pc_*.cpp` or every `mc_*.cpp` file, so the platform difference is resolved by the linker. A build with both prefixes fails to link with duplicate symbols.
+- **Other build systems** (IAR, CubeMX-generated projects) must do the same when collecting files: an MC project excludes every `pc_*.cpp`, and a PC project excludes every `mc_*.cpp`. The prefix makes that one file pattern, but such tools may need it set up by hand.
+- All includes are written from the repository root: `"Printer/Printer.hpp"`, `"Printer/Config/config.hpp"`, `"Hardware/PrinterInit.hpp"`.
 
 ## 2. MC and Common code rules
 
@@ -82,8 +90,8 @@ There are **two absolutely independent test suites, one per platform.** They sha
 
 | Suite | Where | Rules |
 |---|---|---|
-| **PC** | `Tests/pc/` | May use everything the PC offers: the standard library, any test framework, files, processes, the Windows or Linux API. It also tests the Common code, compiled for the host. That a Common file is clean is checked by the CMake include check (§2.4), not by the tests |
-| **MC** | `Tests/mc/` | Does its own job, under the MC and Common rules (§2). It is built and run by its own means, independently of the PC suite |
+| **PC** | `Tests/pc/` | Our own simple suite, similar to the old project's, run by `ctest`, with no external test framework (decision 13.39). Otherwise it may use everything the PC offers: the standard library, files, processes, the Windows or Linux API. It also tests the Common code, compiled for the host. That a Common file is clean is checked by the CMake include check (§2.4), not by the tests |
+| **MC** | `Tests/mc/` | A brand-new suite, written later (decision 13.39). It does its own job, under the MC and Common rules (§2), and is built and run by its own means, independently of the PC suite |
 
 - Production code contains no test hooks. Tests observe behaviour through public interfaces, for example a `CaptureStream` installed as a stream's inner sink (spec §12).
 - Do not silently change what a test checks or what output it expects. If a test is re-baselined, say why in the handoff entry.
