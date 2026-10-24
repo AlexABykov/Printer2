@@ -102,6 +102,7 @@ There are **two absolutely independent test suites, one per platform.** They sha
 ## 5. Working rules
 
 - **Only BY changes the Status of a request** (`Plans/*/… Request.md`).
+- **Only BY commits.** Agents never run `git commit`, `git push` or anything else that rewrites history (`git commit --amend`, `rebase`, `reset`). Leave every change in the working tree, say which files changed, and suggest a commit message if useful. Staging is left to BY too. File moves use `git mv` so history follows the file, but the commit is BY's.
 - **Decisions are BY's.** When a choice is open, propose a default, mark it provisional, and record it as an open item. Recorded decisions go into the specification's §13 table with the owner's wording and the date.
 - **Plans own design; `_ProjectHandOff.md` owns live status.** New mailbox entries go at the top of its Part 2, with an ISO date.
 - **Don't rewrite history.** Correct an old entry or a superseded decision with a dated note, so the earlier reasoning stays on record.

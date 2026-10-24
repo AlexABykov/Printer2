@@ -212,7 +212,7 @@ enum class FlowControl : uint8_t { none, rtsCts };
 struct UartSettings {
     uint32_t    baudrate;
     uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
-    uint8_t     dataBits;     // data bits, parity bit not counted (Q-1)
+    uint8_t     dataBits;     // data bits, parity bit not counted (§13.42, deferred)
     Parity      parity;
     StopBits    stopBits;
     FlowControl flowControl;
@@ -422,6 +422,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.39 | **Test suites:** the PC suite is our own simple suite, similar to the old project's, with no external framework, run from `main()` (§13.41). The MC suite is a brand-new suite, written later (§12). This is base plan D-3, and it settles handoff P-10. | "mostly agree. For PC we will write own simple suite similar to the old one. For MC we will write brand-new test suite later", 2026‑10‑24 |
 | 13.40 | **`endLine` sends `'\n'` first, then resets the colour** (§5), so a coloured line is `ESC[<sgr>m text \n ESC[0m`. The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan. This is base plan D-5. | "agree", 2026‑10‑24 |
 | 13.41 | **Tests run from `main()`, with one result type, and every test isolated** (§12). No separate test executable: `main()` runs `Tests::runAll()` before the endless loop (MC) or the demo's own work (PC). All PC suites share one `TestResults` type. The PC summary may use emoji; the MC suite prints something more compatible. Each PC test builds its own `Printer` and objects, and may break them freely without affecting the next test. | "as this is not a real project, but a Printer technical demo, it's OK to run all the tests from main before entering endless loop on MC and doing whatever on PC"; shared `TestResults`: "good"; "emoji works fine on PC. MC tests will print something else, more compatible"; "I like all tests to be isolated. For each PC test we instantiate a new printer and test it as we wish - even breaking up to inconsistent state - next step will be not affected", 2026‑10‑24 |
+| 13.13 | **Colour model: a 16-colour palette with names.** `Color` holds a 16-colour SGR foreground code, with named presets (`darkGray` = 90, `darkGreen` = 32, …) matching the request's names. 24-bit RGB is not used. | "nevermind, let's use palette with names", 2026‑10‑24 |
 
 ### Open items
 
@@ -434,7 +435,6 @@ Item numbers are stable: a decided item keeps its number, so references such as 
    - *Sub-question:* on MC, should `OpenMode` be carried in the BEGIN marker (e.g. `=== BEGIN <name> truncate ===`) so the splitter can append or replace? Proposal: no. Each marker pair produces one fresh file, and `OpenMode` affects PC only.
 - **13.11** **`printerPlatformInit()` naming.** `hardwareInit()` from earlier drafts is renamed `printerPlatformInit()` to match the camelCase convention and to pair with `printerInit()`. Confirm.
 - **13.12** **`updateUsartX()` naming.** Old `update_UsartX()` renamed `updateUsartX()` per camelCase. Confirm.
-- **13.13** **Colour model.** Applied in this draft: `Color` is a 16-colour SGR code with named presets (`darkGray` = 90, `darkGreen` = 32, …) that match the request's names. The alternative is `Color { r, g, b }`, emitted as 24-bit `ESC[38;2;r;g;bm`, which the request's palette names don't need and older terminals don't support. Confirm 16-colour, or ask for RGB, either instead or in addition.
 - **13.14** **Unit-suffix naming exception** (§2). `cpuFrequency_MHz` breaks the plain camelCase rule. Applied in this draft: accept `_Unit` suffixes as an explicit exception. The alternative is to rename to `cpuFrequencyMhz`, `apb1FrequencyHz`, and so on. Confirm.
 - **13.15** **Direct `stream.printf` vs `prt1` state.** `error.printf(...)` followed by `prt1 << endLine` resets colour on `prt1.pStream`, not on `error`, and it writes the newline to that sink as well. The interaction with `endLine`, colour and `hold` needs a rule. Options: (a) give `BaseStream` its own `endLine()` and colour lifecycle, so direct writes are self-contained; (b) route `printf` through `prt1` (`prt1 << error; prt1.printf(...)`); (c) document that direct `printf` is colour-idle until the next `prt1` switch to that stream. Decide.
 - **13.16** **Several files open at once on the MC.** If `file0` and `file1` are both open, both forward to `fileBackingUsart`, their bytes interleave between markers, and the splitter cannot attribute them. Options: (a) only one `fileN` open at a time on the MC (debug assert on a second `open()`); (b) tag each chunk with a short marker (e.g. `=== FILE <name> ===` on every target switch). Decide.
@@ -455,3 +455,4 @@ Item numbers are stable: a decided item keeps its number, so references such as 
   - `mc_Stream.cpp` holds plain forwarding, so the MC has no colour code (§5).
 
   The alternative is to keep one common `Stream.cpp` and decide at run time only, through `allowsAnsi()`, which returns `false` on every MC sink. That is simpler, but it puts a small amount of unused colour code and one virtual call per line into the MC binary. Confirm the split, or choose the run-time-only version.
+- **13.42** **Does `dataBits` count the parity bit? Deferred.** Parity is used very rarely; one known case is the APPA 106N multimeter, which uses parity over its optical (photo) physical layer. On the F103, the word length (M bit) is 8 or 9 bits *including* parity. Until a real parity user appears, `config.hpp` keeps the provisional rule: `dataBits` counts data bits only, 8 is valid with any parity, 9 only without parity, and 7 is excluded. Revisit when a device that needs parity is connected. (Phase 1 plan Q-1.)

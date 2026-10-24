@@ -40,7 +40,7 @@ The repository is further along than the base plan and handoff say. `config.h` i
 3. Add `.gitignore` with `.idea/`, `cmake-build-*/`, `build/` and `*.exe`. This also stops `main.exe` (currently untracked in the root) from showing up.
 4. Build; `printer_2` exits 0.
 
-**Proposed commit:** "Phase 0: move config header to Printer/Config/config.hpp, add .gitignore". Doing Phase 0 as its own commit keeps the history readable. Merging it into the Phase 1 commit also works, if BY prefers.
+**Commit:** BY commits all changes personally (`AGENTS.md` §5); the implementation leaves everything in the working tree. A suggested message for this step: "Phase 0: move config header to Printer/Config/config.hpp, add .gitignore". Whether Phase 0 and Phase 1 become one commit or two is BY's choice.
 
 The base plan's build-status note ("`config.h` still holds the `main()` stub") and the same remark in the 2026‑10‑24 handoff entry are out of date. The handoff should get a dated correction note in the Phase 1 entry (house rule 7), and the base plan's note can simply be updated.
 
@@ -80,7 +80,7 @@ enum class FlowControl : uint8_t { none, rtsCts };
 struct UartSettings {
     uint32_t    baudrate;
     uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
-    uint8_t     dataBits;     // data bits, parity bit not counted (Q-1)
+    uint8_t     dataBits;     // data bits, parity bit not counted (§13.42, deferred)
     Parity      parity;
     StopBits    stopBits;
     FlowControl flowControl;
@@ -169,7 +169,7 @@ static_assert(!isValid(withBank(printerMaxBankSize + 1)));
 // Baud rate
 static_assert(!isValid(UartSettings{0, 0, 8, Parity::none, StopBits::one, FlowControl::none}));
 
-// Data bits (Q-1: parity not counted)
+// Data bits (§13.42, deferred: parity not counted)
 static_assert(isValid(withBits(8, Parity::even)));
 static_assert(isValid(withBits(9, Parity::none)));
 static_assert(!isValid(withBits(9, Parity::even)));
@@ -222,10 +222,10 @@ grep -n '#include <' Printer/Config/config.hpp     # expect only <cstdint>
 
 The check binary lands in `build/`, which `.gitignore` excludes.
 
-### 3.4 Record and commit
+### 3.4 Record
 
 - Add a mailbox entry to `_ProjectHandOff.md`: compiler and version, commands, exit codes, and the dated correction about `config.h` (§2).
-- **Proposed commit:** "Phase 1: common config header Printer/Config/config.hpp with compile-time checks". It contains `Printer/Config/config.hpp` and the two `Tests/pc/` files.
+- **Commit:** left to BY (`AGENTS.md` §5). Suggested message: "Phase 1: common config header Printer/Config/config.hpp with compile-time checks", covering `Printer/Config/config.hpp` and the two `Tests/pc/` files.
 
 ## 4. CMake
 
@@ -243,14 +243,15 @@ The earlier deviations from the spec sketch were settled as follows, and spec §
 | `<stdint.h>` vs `<cstdint>` | `<cstdint>`, types unqualified. "It works fine in similar SIL projects." Enforcement is an include allow-list (Phase 2) instead of `-nostdinc++` |
 | `__cplusplus` guard | Dropped: `#pragma once` alone; the `.hpp` name says C++17, not C-compatible |
 | `isValid()` and the three `static_assert`s | Added to `config.hpp` and to the spec sketch |
+| Colour model (spec §13.13) | A 16-colour palette with names, as in the code: "nevermind, let's use palette with names" |
 | CMake in Phase 1 | No change: the config lives in `Printer/Config/`, and the repository root is already on the include path; the include check and the test target move to Phase 2 |
 
 **Questions** (each has a provisional answer, already used in the code):
 
 | ID | Question | Provisional answer |
 |---|---|---|
-| Q-1 | Does `dataBits` count the parity bit? On the F103, the word length (M bit) is 8 or 9 bits *including* parity, so "8 data bits + parity" needs M = 9, and "9 data bits + parity" is impossible. | `dataBits` counts data bits only; valid combinations are 8 (with any parity) and 9 (without parity). 7 data bits with parity (M = 8) is possible on the F103 but excluded for now, matching the base plan's "8 or 9" |
-| Q-2 | Phase 0 as its own commit, or merged into Phase 1? | Its own commit (§2) |
+| Q-1 | Does `dataBits` count the parity bit? | **Deferred by BY, 2026‑10‑24 (spec §13.42):** parity is used very rarely (one known case: the APPA 106N multimeter over its optical link). The provisional rule stays in `isValid()` until a real parity user appears: data bits only; 8 with any parity, 9 without parity, 7 excluded |
+| Q-2 | Phase 0 as its own commit, or merged into Phase 1? | **BY commits personally** (`AGENTS.md` §5), so the split is BY's choice; the plan only suggests messages (§2, §3.4) |
 | Q-3 | `-Wall -Wextra -Wpedantic -Werror` project-wide from Phase 2 on? | Yes, decided in Phase 2; in Phase 1, the hand-compiled checks use it |
 | Q-4 | Keep the check as an executable (it has one run-time check), or make it compile-only? | Executable: the single-address check needs two linked translation units |
 | Q-5 | Allow-list contents for the Phase 2 check. Besides `<cstdint>`, should the other type-only C++ wrappers (`<cstddef>`, `<climits>`, `<cfloat>`, `<cstdarg>`) be allowed too, for consistency? | Not yet: only `<cstdint>` was asked for. The C forms (`<stddef.h>`, `<stdarg.h>`, …) cover the same needs |

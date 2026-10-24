@@ -106,7 +106,7 @@ Every header starts with `#pragma once` (spec §2, §13.29).
 
 ## 4. Phases
 
-Each phase ends in a buildable, green state and is one commit, unless BY prefers otherwise.
+Each phase ends in a buildable, green state. BY commits all changes personally (`AGENTS.md` §5); a phase is a natural commit boundary, but the split is BY's choice.
 
 ### Phase 0 — Repository preparation
 1. Move `main()` from the root `config.h` into `main.cpp` (resolves handoff P-12 in favour of "keep the config header as compile-time config").
@@ -405,16 +405,16 @@ The plan follows the current spec text for these. If BY decides otherwise, the c
 
 | Spec item | Adopted here | Cost to change later |
 |---|---|---|
-| §13.13 colour model | 16-colour SGR `Color` | Low: `Color` and one emit function |
 | §13.14 unit suffixes | `cpuFrequency_MHz`, `apb1Frequency_Hz`, `hseFrequency_Hz` | Trivial rename |
 | §13.17 write while closed | Dropped | Low: one branch in `FileStream::sendByteRaw` |
 | §13.19 `fileN.name` | Public field | Low: becomes a setter |
 | §13.20 role → target form | `PcSink` / `McSink` enums resolved in `printerInit()` | Low: one `switch` per platform |
+| §13.42 `dataBits` and parity (deferred) | Data bits only: 8 with any parity, 9 without parity, 7 excluded | Low: one condition in `isValid()` |
 | §13.25 the two boot functions | `printerPlatformInit()` / `printerInit()` stay public | Low: make them private or rename |
 
 These spec open items are **not touched** by this plan and do not block it: §13.1, §13.2, §13.11, §13.12, §13.15, §13.16, §13.18, §13.22 and §13.31.
 
-The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot, umbrella header, presets), §13.29 (`.hpp`) and §13.30 (bare metal) are applied here. Decisions §13.6, §13.21, §13.23, §13.24, §13.26 and §13.27 shape the layout, but their implementation belongs to the MC Hardware plan.
+The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.13 (16-colour palette with names), §13.28 (constructor boot, umbrella header, presets), §13.29 (`.hpp`) and §13.30 (bare metal) are applied here. Decisions §13.6, §13.21, §13.23, §13.24, §13.26 and §13.27 shape the layout, but their implementation belongs to the MC Hardware plan.
 
 ## 7. Risks and checks
 
