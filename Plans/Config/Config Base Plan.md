@@ -113,7 +113,7 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 2. Declare the constants `inline constexpr` (C++17), as the spec sketches now do. Plain `constexpr` at namespace scope gives each translation unit its own copy; `inline` gives `defaultFileName` one address everywhere.
 3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<cstdint>` (spec §1.1).
 
-**Done when:** `test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles, and the CMake include check passes for it (spec §1.1). The detailed plan is `Phase 1 plan.md`. It also `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`.
+**Done when:** `Tests/pc/test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles by hand with `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror`. It `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`. `config.hpp`'s only system include is `<cstdint>` (manual check). The only `CMakeLists.txt` change is the `Config/` include path, from Phase 0; the include check and the test target come with Phase 2. The detailed plan is `Phase 1 plan.md`.
 
 ### Phase 2 — Platform selection and CMake
 1. `PRINTER_PLATFORM` cache variable, `PC` (default) or `MC`. Configuring with any other value is an error.
@@ -124,7 +124,28 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
    - `printer_2`: the demo; links `printer`.
    - `printer_tests`: the **PC suite** (`Tests/pc/`), registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`. The MC suite (`Tests/mc/`) is independent and belongs to the MC Hardware plan (spec §12).
    - `config_mc_check`: compile-only object library for Phase 6, part of the PC suite; never linked. It checks `config_mc.hpp`, which is a Common-area file (`AGENTS.md` §1).
-   - **Library rules (spec §1.1):** `printer_check_includes` (introduced in Phase 1) is applied to every Common and MC source, so a header outside the allow-list (`<cstdint>` and the compiler's C headers) fails at configure time. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked.
+   - **Library rules (spec §1.1):** a `printer_check_includes` function is introduced here and applied to every Common and MC source, so a header outside the allow-list (`<cstdint>` and the compiler's C headers) fails at configure time. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked. The function below was tested on 2026‑10‑24 with CMake 4.3.1, in a scratch copy: a clean build passed, and adding `#include <array>` to `config.hpp` failed the next plain build with "`<array>` is not allowed in Common or MC code". `CMAKE_CONFIGURE_DEPENDS` is what makes CMake re-check a file as soon as it changes.
+
+     ```cmake
+     # Common and MC code may include only these system headers (spec §1.1, AGENTS.md §2).
+     set(PRINTER_ALLOWED_SYSTEM_HEADERS cstdint stdint.h stddef.h stdarg.h limits.h float.h)
+
+     function(printer_check_includes)
+         foreach(file IN LISTS ARGN)
+             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
+             file(STRINGS "${file}" lines REGEX "^[ \t]*#[ \t]*include[ \t]*<")
+             foreach(line IN LISTS lines)
+                 string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*<([^>]+)>.*" "\\1" header "${line}")
+                 if(NOT header IN_LIST PRINTER_ALLOWED_SYSTEM_HEADERS)
+                     message(FATAL_ERROR "${file}: <${header}> is not allowed in Common or MC code (AGENTS.md §2)")
+                 endif()
+             endforeach()
+         endforeach()
+     endfunction()
+     ```
+
+     It checks each file's own `#include <...>` lines, not what an allowed header includes in turn, and not project includes (`#include "..."`).
+   - `printer_tests` picks up the Phase 1 checks (`Tests/pc/test_config_common.cpp` and `test_config_common_main.cpp`), which were compiled by hand until now.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
 **Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <array>` in a common file fails the build (manual check, then reverted).
