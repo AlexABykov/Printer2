@@ -15,6 +15,22 @@ The new `Printer` module is a **standalone, portable** subsystem, intentionally 
 - Buffering and colour are core algorithm choices, not afterthoughts.
 - Platform-specific code (USART/DMA/GPIO, console, real files) is isolated from common logic.
 
+### 1.1 Memory and library rules (MC)
+
+The MC has no operating system, very little RAM, and only a poor heap allocator with no defragmentation. Even when free heap is available, allocating anything larger than a byte can't be relied on. So these rules apply to **all common code** (`Config/`, `Printer/` outside `pc_*`) and to **all MC code** (`mc_*`, chip headers), §13.35:
+
+1. **No C++ standard library.** No `std::` facilities and no C++ library headers: not `<cstdint>`, `<array>`, `<new>`, `<algorithm>`, `<iostream>`, and so on. Only the compiler's own freestanding C headers are allowed, because they hold types and macros only and cost no RAM and no code: `<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, `<limits.h>`, `<float.h>`. Types are written unqualified (`uint8_t`, `uint32_t`).
+2. **No heap.** No `new`, `delete`, `malloc` or `free`, and nothing that calls them. All storage is static and sized at compile time.
+3. **No exceptions and no RTTI.** The MC build uses `-fno-exceptions -fno-rtti`.
+4. **Trivial destructors for globals.** A global with a non-trivial destructor is registered through `__cxa_atexit`, and the C library's `atexit` may allocate. Every global stream, `nullSink` and `prt1` keeps a trivial destructor.
+5. **No function-local statics with dynamic initialization.** Their thread-safe guards pull in `__cxa_guard_*`; the MC build also uses `-fno-threadsafe-statics`.
+
+**Enforcement:**
+- Common and MC sources are compiled with `-nostdinc++`, which makes any C++ library header a compile error while leaving the compiler's C headers available. This was checked with g++ 15.2.0 on 2026‑10‑24: `<stdint.h>`, `<stddef.h>` and `<stdarg.h>` compile; `<cstdint>` and `<new>` fail with "No such file or directory".
+- The MC link provides no `_sbrk`, so any use of the heap becomes a link error instead of a runtime failure.
+
+**PC-only code** (`pc_*` files) may use the standard library: `std::cout`, `std::ofstream`, `std::abort()` and the Windows API. It may not leak those types into common headers (§13.36).
+
 ## 2. Naming conventions
 
 - **Types/classes:** `PascalCase` — `BaseStream`, `Stream`, `FileStream`, `UsartStream`, `ConsoleStream`, `NullStream`, `Printer`, `Color`, `UartSettings`.
@@ -93,7 +109,7 @@ file0.printf("t,pos\n");
 info.printf("frame %u received", n);
 ```
 
-- A free-function format engine (`printFormatted(BaseStream&, const char*, va_list)`) does the work; `BaseStream::printf` forwards to it. Both `Stream` and `FileStream` expose it uniformly.
+- A free-function format engine (`printFormatted(BaseStream&, const char*, va_list)`, with `va_list` from the compiler's `<stdarg.h>`, §1.1) does the work; `BaseStream::printf` forwards to it. Both `Stream` and `FileStream` expose it uniformly.
 - Declared with `__attribute__((format(printf, 2, 3)))` (argument 1 is the implicit `this`), so GCC/Clang check format strings against arguments at compile time.
 - Formatting: `%d %i %u %x %X %f %s %c %p %%`, `l`/`ll` length modifiers. `%f` precision still ignored in v1.
 - No auto-newline and no automatic target — callers write `<< endLine` explicitly. The old "auto-newline on error" convenience is gone.
@@ -133,7 +149,7 @@ file0.close();                                    // flushes and emits END marke
 - Assignment is legal only before first write or after `close()`. The pointed-to string must have static lifetime. Enforcement is open (§13.19).
 - **Default name if unset:** `cfg::defaultFileName` (`"noname.log"`), declared in `config.hpp` and used on both platforms.
 - **`open(name, mode = OpenMode::append)`**, with `enum class OpenMode { append, truncate }`. `truncate` replaces the old `ClearFile` semantics.
-- **PC:** `open()` opens `std::ofstream(name)` in the requested mode. `close()` flushes and releases.
+- **PC:** `open()` opens `std::ofstream(name)` in the requested mode. `close()` flushes and releases. The `std::ofstream` objects live in a function-local static array inside `pc_FileStream.cpp`, one per `fileN`, constructed on the first `open()`, so the common `FileStream.hpp` never includes `<fstream>` (§1.1). `FileStream` itself holds only its index.
 - **MC:** `open()` emits a BEGIN marker on the backing USART; `close()` emits an END marker. Bytes between markers are plain text. No actual file is created on the MC — the markers delimit text on the USART so a PC-side capture can be split back into files. Whether `OpenMode` is carried in the marker is part of §13.2.
 - **Marker text is identical on both platforms** (§13.2). A single splitter parses either platform's captured byte stream and produces the same `{name → content}` map.
 - **Open:** two files open at once on the MC share one USART and would interleave (§13.16).
@@ -155,7 +171,7 @@ The sketches below fix names and types. The values are examples.
 
 ```cpp
 #pragma once
-#include <cstdint>
+#include <stdint.h>   // compiler-provided C header; no C++ library (§1.1)
 
 namespace cfg {
 
@@ -326,6 +342,7 @@ Until `printerInit()` has run, every stream writes to `nullSink` (§4).
 
 - CMake, one configuration per platform (MC / PC), chosen at configure time — same approach as the old project. They are two **configurations**, not two targets in one build tree, because the MC build needs its own compiler (an ARM toolchain file) and a build tree has only one compiler. A `CMakePresets.json` provides `pc` and `mc` presets, which CLion shows as two profiles.
 - User code includes the umbrella header as `"Printer/Printer.hpp"`, so the directory that contains `Printer/` is on the include path.
+- **Library rules in the build (§1.1):** common and MC sources compile with `-nostdinc++`, and the MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources compile without `-nostdinc++`.
 - `mc_*` / `pc_*` translation units are selected per configuration; polymorphism is link-time (abstract `BaseStream` in common, concrete implementations in `mc_` or `pc_` files).
 - Exact target layout is deferred; the old project's scheme will be reused. Requirement: `Printer` is a self-contained CMake target that links into a new project without pulling in the old `Common/` tree.
 
@@ -361,6 +378,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.30 | **Bare metal only.** No vendor or CMSIS headers; register layouts are written from the reference manual (§2, §10). CMSIS may be named in documentation as an illustration. | "CMSIS – we can use that acronym in documentation for illustration, but now we implement bare metal only", 2026‑10‑24 |
 | 13.32 | **`bankSize` replaces `bufferSize`.** The value is the size of **one** bank, and two banks are created: RAM = 2 × `bankSize`; 0 = polled, no DMA (§7). There is no even-size rule; the minimum is §13.33. `printerMaxDmaBuffer` is renamed `printerMaxBankSize` (≤ 65535, the CNDTR limit). The earlier text (total size, split in two, must be even) is superseded. | "Or result is not divide by 2, but multiply - create 2 buffers of given size. Let's decide"; "B with bankSize – agree", 2026‑10‑24 |
 | 13.33 | **Minimum `bankSize` is 4** (when not 0), enforced by `isValid()` and by a `static_assert` in `UsartStream<N>` (§7). Banks of 1–3 bytes are formally meant to be supported, but they wait until the "head / body / tail" algorithm from the previous project is proven on them (§13.34). | "Formally, minimal bank size 1 must be supported … But I'm not sure that old algorithm … can handle this case correctly … let's say minimal bank size is 4 elements, but we promise to test it somehow later", 2026‑10‑24 |
+| 13.35 | **No C++ standard library and no heap in common and MC code** (§1.1). Only the compiler's freestanding C headers (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, …). No `new` / `malloc`, no exceptions, no RTTI, trivial destructors for globals. Enforced with `-nostdinc++` and an MC link without `_sbrk`. | "MC platform has no operation system and a very poor heap allocator … there is no heap defragmenter. So, using std:: is prohibited", 2026‑10‑24 |
 
 ### Open items
 
@@ -388,3 +406,4 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 - **13.25** **The two boot functions.** The entry point is decided (§13.28): the `Printer` constructor calls the idempotent `boot()`, which runs `printerPlatformInit()` and then `printerInit()` (§9). Still to decide: should the two free functions stay public (for tests and for projects without `prt1`), or become private to `boot()`? And should `printerPlatformInit()` be renamed to match, e.g. `bootPlatform()` (this also answers §13.11)?
 - **13.31** **Startup code and the CPU-boot hook.** Bare metal (§13.30) needs a vector table and a `Reset_Handler` that copies `.data`, clears `.bss`, runs the global constructors and calls `main()`. Who provides it: the Printer project, or the host project? It is the one place that can guarantee "CPU boot before `prt1`'s constructor" (§10). Proposal: the Printer project ships a startup file for each MC chip. Its `Reset_Handler` calls an optional weak `cpuBoot()` before the global constructors. A small CPU-boot example (72 MHz, flash latency first) defines `cpuBoot()` and shows `cfg::sysclkFrequency_Hz` / `cpuFrequency_MHz` being updated to match; the running clock check (§13.27) catches a mismatch. Decide.
 - **13.34** **Bank sizes 1–3: the promised test.** Before `printerMinBankSize` can drop below 4, the DMA bank algorithm needs edge-case tests on the PC register model (§10), for `bankSize` = 1, 2, 3 and 4. They must cover: a write that exactly fills a bank; a write one byte longer than a bank; a swap while DMA is still busy (backpressure and drop); `updateUsartX()` on a partly filled bank; and the "head", "body" and "tail" states each being empty. The tests belong to the MC Hardware plan. If they pass, the minimum drops to 1; if not, the algorithm is fixed first or the minimum stays. Open until the tests run.
+- **13.36** **Standard library in PC-only files.** §1.1 lets `pc_*` files use `std::cout`, `std::ofstream` and `std::abort()`, because the PC has an OS and a real heap, and the spec already relies on them (§3, §8, §10). The rule that keeps the MC safe is that no `std` type appears in a common header. Confirm, or require the PC side to avoid the standard library too (for example, `WriteFile` / `CreateFile` from the Windows API instead of `std::cout` / `std::ofstream`).

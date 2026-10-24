@@ -109,9 +109,9 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 ### Phase 1 — `Config/config.hpp` (common)
 1. Write the header as specified in spec §9: feature flags, `Color` + 16 presets, `Parity` / `StopBits` / `FlowControl`, `UartSettings` (with `bankSize`, spec §7), `uartDefault`, `printerMinBankSize` (4), `printerMaxBankSize`, `defaultFileName`.
 2. Declare the constants `inline constexpr` (C++17), not plain `constexpr`. Plain `constexpr` at namespace scope gives each translation unit its own copy. That is harmless for integers, but `inline` gives `defaultFileName` one address everywhere. This is a deviation from the sketch's spelling only, not its meaning.
-3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence.
+3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<stdint.h>`, never `<cstdint>` (spec §1.1).
 
-**Done when:** `test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles. It also `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`.
+**Done when:** `test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles with `-nostdinc++` (spec §1.1). It also `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`.
 
 ### Phase 2 — Platform selection and CMake
 1. `PRINTER_PLATFORM` cache variable, `PC` (default) or `MC`. Configuring with any other value is an error.
@@ -122,9 +122,10 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
    - `printer_2`: the demo; links `printer`.
    - `printer_tests`: host test executable, registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`.
    - `config_mc_check`: compile-only object library for Phase 6; never linked.
+   - **Library rules (spec §1.1):** common sources (`Config/`, `Printer/` outside `pc_*`) and `mc_*` sources compile with `-nostdinc++`, so a C++ library header is a build error. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources compile without `-nostdinc++`. CMake sets this per source file group.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
-**Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item).
+**Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <cstdint>` in a common file fails the build (manual check, then reverted).
 
 ### Phase 3 — `Config/config_pc.hpp`
 1. As in spec §9: `platformHasColor = true`, the `PcSink` enum, `infoTarget` / `messageTarget` / `errorTarget`, and `infoColor` / `messageColor` / `errorColor`. Function declarations live in `Hardware/PrinterInit.hpp`, not here, so the config stays data-only.
@@ -143,7 +144,7 @@ Only what the binding and colour rules need.
    - `flush()` forwards to `pInner` and does not touch colour state (§5, §13.9).
 4. **`ConsoleStream console0`**: writes to `std::cout`. `allowsAnsi()` returns a flag that `printerPlatformInit()` sets (false until then).
 5. **PC `FileStream file0..file8`**: `open(name, OpenMode = append)`, `close()`, `sendByteRaw`, `flush`; `allowsAnsi()` is always false. A write while closed is dropped (provisional, pending §13.17). There are no markers yet (§13.2), and `name` is a public field (§13.19).
-   - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `file0..file8` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. The proposal is to keep the `ofstream` in aligned storage, constructed with placement-new in `open()` and destroyed in `close()`, so `FileStream` keeps a `constexpr` constructor. See D-4.
+   - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `file0..file8` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. A `std::ofstream` member would also put `<fstream>` into the common `FileStream.hpp`, which the library rules forbid (spec §1.1). So the nine `std::ofstream` objects live in a **function-local** static array inside `pc_FileStream.cpp`, constructed on the first `open()`. A namespace-scope array would be initialized at run time, which brings the initialization-order problem back. `FileStream` holds only its index and an `isOpen` flag, and it doesn't touch the array while closed. That keeps its constructor `constexpr` and its header free of the standard library. The function-local static is allowed here because §1.1 rule 5 applies to common and MC code, not to `pc_*` files. See D-4.
 6. **`Tests/CaptureStream`**: records bytes. `allowsAnsi()` is settable per test (§12).
 
 **Done when:** the core compiles in the PC build, and `test_color.cpp` passes:
@@ -206,7 +207,7 @@ New decisions this plan introduces. Each has a provisional default so work can s
 | D-1 | Where do the config headers live: `Config/` (project-owned, outside the library) or `Printer/Config/` (shipped with the library)? | `Config/`. A host project supplies its own config, and the `printer` target takes the directory from a CMake variable `PRINTER_CONFIG_DIR` (default `${CMAKE_SOURCE_DIR}/Config`) |
 | D-2 | How does common code find the platform header? | Include-path selection of `config_platform.hpp` (kept by BY, 2026‑10‑24) |
 | D-3 | Test style (handoff P-10) | Assert-based runner with no external dependency, registered with `ctest` |
-| D-4 | PC `FileStream`'s `ofstream` storage | Aligned storage + placement-new in `open()`, to keep constant initialization (§4) |
+| D-4 | PC `FileStream`'s `ofstream` storage | A function-local static array of nine `std::ofstream` in `pc_FileStream.cpp`, constructed on first `open()`; `FileStream` holds an index and an `isOpen` flag. This keeps constant initialization (spec §4) and keeps `<fstream>` out of the common header (spec §1.1). Revised 2026‑10‑24: the earlier "aligned storage + placement-new" would have needed `<new>` |
 | D-5 | The bytes `endLine` emits, and their order | `'\n'` first, then `resetColor()`. Resetting first would leave the stream idle, so the newline would re-emit the colour (§5). The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan |
 
 ## 6. Spec open items adopted provisionally by this plan
@@ -227,6 +228,9 @@ These spec open items are **not touched** by this plan and do not block it: §13
 The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot, umbrella header, presets), §13.29 (`.hpp`) and §13.30 (bare metal) are applied here. Decisions §13.6, §13.21, §13.23, §13.24, §13.26 and §13.27 shape the layout, but their implementation belongs to the MC Hardware plan.
 
 ## 7. Risks and checks
+
+- **Library rules (spec §1.1).** `-nostdinc++` on common sources catches a C++ library header, but it doesn't catch a call to `malloc` or `new` through a C header. On the PC those link silently; on the MC, the link without `_sbrk` catches them. Until the MC build exists, code review is the check: no `new`, `malloc` or `std::` outside `pc_*` files. `Tests/` is PC-only code and may use the standard library. The one exception is `test_config_common.cpp`, which compiles with `-nostdinc++` to prove that `config.hpp` is clean.
+- **Trivial destructors** (spec §1.1 rule 4). `BaseStream` has no virtual destructor (Phase 4), and the same goes for `Stream`, `NullStream`, `FileStream` and `Printer`. Each class gets `static_assert(__has_trivial_destructor(T))`, using the compiler built-in because `<type_traits>` is not allowed in common code. Checked with g++ 15.2.0 under `-nostdinc++` on 2026‑10‑24: `__has_trivial_destructor` works, and `__is_trivially_destructible` does not exist in that compiler.
 
 - **Constant initialization of the streams** (§4). This depends on every stream type having a `constexpr` constructor and on `nullSink` being constant-initialized. GCC has no `-Wglobal-constructors` and C++17 has no `constinit`, so the check is test B1 plus a code-review rule: no stream type may have a member with a non-`constexpr` constructor (D-4).
 - **`prt1` is dynamically initialized** by design: its constructor boots. The `nullptr` guard (P3) covers a `Printer` that hasn't been bound, not a `prt1` used before its own constructor. That case is undefined behaviour and stays a documented rule (spec §4).
