@@ -12,13 +12,18 @@ Make this program build and run on the PC, as BY described it (spec §9, §13.28
 
 ```cpp
 #include "Printer/Printer.hpp"
+#include "Tests/Tests.hpp"
 
 Printer prt1 = {};
 
 int main() {
+    const int failed = Tests::runAll();   // all tests run from main (spec §12, §13.41)
     prt1 << message << "Hello Printer 2!" << endLine;
+    return failed == 0 ? 0 : 1;           // on the MC, an endless loop instead (MC Hardware plan)
 }
 ```
+
+Printer2 is a technical demo, so the tests run from `main()` before the demo's own work: on the MC before the endless loop, on the PC before "whatever the demo does". There is no separate test executable (spec §13.41).
 
 Behind that line, the slice proves the configuration model:
 - the config headers are selected per platform;
@@ -38,7 +43,7 @@ This follows handoff house rule 1 (**PC first**): the configuration and binding 
 - The minimal stream core the binding needs: `BaseStream`, `NullStream`, `Stream` (lazy colour, §5), `ConsoleStream`, and PC `FileStream` (open/close/write only).
 - `Hardware/PrinterInit.hpp` and `Hardware/pc_PrinterInit.cpp`: the PC boot (VT mode) and the PC binding.
 - A minimal `Printer`, just enough for the program above: the constructor calls an idempotent `boot()`, plus a `nullptr`-safe `pStream`, target switching, `const char*` insertion and `endLine`.
-- A host test target with a `CaptureStream` (spec §12).
+- The PC test suite (§4a): our own simple suite in the style of the old project, run from `main()`, with one shared `TestResults` type and isolated tests (spec §12, §13.39, §13.41).
 - A host compile-check of `config_mc.hpp`. It includes no vendor header, so it needs no stub.
 
 **Out of scope** (later plans)
@@ -83,15 +88,18 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
 │   ├── mc_STM32F103xE.hpp       # (MC Hardware plan) real addresses, silicon facts
 │   └── pc_STM32F103xE.hpp       # (MC Hardware plan) static volatile registers
 └── Tests/
+    ├── Tests.hpp                # entry point only: struct Tests { static int runAll(); }
     ├── pc/                      # PC suite (spec §12): free to use the PC; tests Common code too
+    │   ├── pc_Tests.cpp         # runner: suite switches, GlobalTestResults, summary (§4a)
+    │   ├── TestResults.hpp      # the one result type shared by all PC suites
     │   ├── CaptureStream.hpp
-    │   ├── test_main.cpp        # own simple PC suite runner (D-3); defines the tests' prt1
-    │   ├── test_config_common.cpp
-    │   ├── test_binding_pc.cpp
-    │   ├── test_color.cpp
-    │   ├── test_printer.cpp
-    │   └── test_config_mc_host.cpp
-    └── mc/                      # (MC Hardware plan) MC suite, independent of the PC suite
+    │   ├── test_config.cpp      # ConfigTests: the Phase 1 checks
+    │   ├── test_config_tu2.cpp  # second translation unit for the single-address check
+    │   ├── test_color.cpp       # ColorTests: C1-C6
+    │   ├── test_binding.cpp     # BindingTests: B1-B4
+    │   ├── test_printer.cpp     # PrinterTests: P1-P3
+    │   └── test_config_mc_host.cpp   # compile-only check of config_mc.hpp; not linked
+    └── mc/                      # (MC Hardware plan) brand-new MC suite, incl. mc_Tests.cpp
 ```
 
 Every header starts with `#pragma once` (spec §2, §13.29).
@@ -121,8 +129,8 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 3. **Link-time platform selection** (spec §9, §11, §13.37). CMake builds the common sources plus either all `pc_*.cpp` or all `mc_*.cpp` files. Common `.cpp` files include only common headers (`Printer/Config/config.hpp` among them); `pc_*` / `mc_*` files include their own platform config directly. There is no forwarding header and no platform macro. Building both prefixes at once would fail to link with duplicate symbols, which is the intended guard.
 4. Targets:
    - `printer`: static library with the common `Printer/` and `Hardware/` sources plus the platform's prefixed sources (`pc_*` or `mc_*`). Its only public include dir is the repository root, so every include is written from there: `"Printer/Printer.hpp"`, `"Printer/Config/config.hpp"`, `"Hardware/PrinterInit.hpp"`.
-   - `printer_2`: the demo; links `printer`.
-   - `printer_tests`: the **PC suite** (`Tests/pc/`), registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`. The MC suite (`Tests/mc/`) is independent and belongs to the MC Hardware plan (spec §12).
+   - `printer_2`: the demo; links `printer`. It also compiles the test suite of its platform, because `main()` runs the tests (§1, §4a, spec §13.41): on the PC, `Tests/pc/*.cpp` (except the compile-only `test_config_mc_host.cpp`). The MC suite (`Tests/mc/`) is brand-new, independent, and belongs to the MC Hardware plan (spec §12). There is no separate test executable.
+   - Optionally, `enable_testing()` and `add_test(NAME printer_2 COMMAND printer_2)`, so `ctest` and CLion can run the demo-plus-tests and read its exit code (§4a).
    - `config_mc_check`: compile-only object library for Phase 6, part of the PC suite; never linked. It checks `config_mc.hpp`, which is a Common-area file (`AGENTS.md` §1).
    - **Library rules (spec §1.1):** a `printer_check_includes` function is introduced here and applied to every Common and MC source, so a header outside the allow-list (`<cstdint>` and the compiler's C headers) fails at configure time. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources are not checked. The function below was tested on 2026‑10‑24 with CMake 4.3.1, in a scratch copy: a clean build passed, and adding `#include <array>` to `config.hpp` failed the next plain build with "`<array>` is not allowed in Common or MC code". `CMAKE_CONFIGURE_DEPENDS` is what makes CMake re-check a file as soon as it changes.
 
@@ -145,10 +153,13 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
      ```
 
      It checks each file's own `#include <...>` lines, not what an allowed header includes in turn, and not project includes (`#include "..."`).
-   - `printer_tests` picks up the Phase 1 checks (`Tests/pc/test_config_common.cpp` and `test_config_common_main.cpp`), which were compiled by hand until now.
+   - **PC suite skeleton (§4a):** `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp` and the runner `Tests/pc/pc_Tests.cpp`. The Phase 1 checks, compiled by hand until now, become the first suite, `ConfigTests` (`Tests/pc/test_config.cpp`):
+     - its `static_assert`s move over unchanged;
+     - the single-address check becomes a runtime `check()`. It compares `&cfg::defaultFileName` taken in `test_config.cpp` with the same address returned by `Tests/pc/test_config_tu2.cpp`, a one-function second translation unit (the old `test_config_common_main.cpp` without its `main()`);
+     - `main.cpp` gains `Tests::runAll()`, as in §1.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
-**Done when:** the `pc` preset configures and builds, `ctest` runs (with an empty test set at this point), and the `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <array>` in a common file fails the build (manual check, then reverted).
+**Done when:** the `pc` preset configures and builds; `printer_2` runs `ConfigTests`, prints the summary with "✅ ALL TESTS PASSED", and exits 0; a deliberately failing `check()` makes it print "❌ SOME TESTS FAILED" with the test's name and exit 1 (manual check, then reverted). The `printer` target compiles with no vendor header on any include path (handoff v0 DoD item). A deliberately added `#include <array>` in a common file fails the build (manual check, then reverted).
 
 ### Phase 3 — `Printer/Config/config_pc.hpp`
 1. As in spec §9: `platformHasColor = true`, the `PcSink` enum, `infoTarget` / `messageTarget` / `errorTarget`, and `infoColor` / `messageColor` / `errorColor`. Function declarations live in `Hardware/PrinterInit.hpp`, not here, so the config stays data-only.
@@ -172,7 +183,7 @@ Only what the binding and colour rules need.
    - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `file0..file8` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. A `std::ofstream` member would also put `<fstream>` into the common `FileStream.hpp`, which the library rules forbid (spec §1.1). So the nine `std::ofstream` objects live in a **function-local** static array inside `pc_FileStream.cpp`, constructed on the first `open()`. A namespace-scope array would be initialized at run time, which brings the initialization-order problem back. `FileStream` holds only its index and an `isOpen` flag, and it doesn't touch the array while closed. That keeps its constructor `constexpr` and its header free of the standard library. The function-local static is allowed here because §1.1 rule 5 applies to common and MC code, not to `pc_*` files. See D-4.
 6. **`Tests/pc/CaptureStream`**: records bytes. `allowsAnsi()` is settable per test (§12). It belongs to the PC suite; the MC suite will have its own.
 
-**Done when:** the core compiles in the PC build, and `test_color.cpp` passes:
+**Done when:** the core compiles in the PC build, and the `ColorTests` suite (`Tests/pc/test_color.cpp`, §4a) passes. Each test builds its own local `Stream` and `CaptureStream` (isolation, §4a):
 - C1: `allowsAnsi = true`, colour `darkGray`, "ab" gives `"\x1b[90mab"`; then `resetColor()` gives `"\x1b[0m"`.
 - C2: after `resetColor()`, the next byte re-emits `"\x1b[90m"` (the §5 idle rule, covering the next line on the same stream).
 - C3: `resetColor()` on an idle stream emits nothing.
@@ -194,16 +205,20 @@ Only what the binding and colour rules need.
    - `endLine`: a keyword object whose `operator<<` sends `'\n'` and then calls `pStream->resetColor()` (D-5).
 4. Demo `main.cpp`: exactly the program in §1. In an interactive console, the line appears in dark green.
 
-**Done when** `test_binding_pc.cpp` and `test_printer.cpp` pass. `test_main.cpp` defines the tests' `Printer prt1 = {};`.
-- B1 (before boot): `test_main.cpp` defines a probe object **before** `prt1`. Definition order is construction order within one translation unit, so the probe's constructor runs first. It records whether `info.pInner`, `message.pInner` and `error.pInner` equal `&nullSink`, and it writes a byte to each stream directly. A test then asserts what was recorded. The probe does not print through `prt1`, because that would use `prt1` before its lifetime begins (spec §4).
-- B2: after construction, `info.pInner == &console0`, `message.pInner == &console0`, and `error.pInner == &file1` (the §9 example values). Colours equal the `cfg::*Color` constants.
-- B3: under `ctest`, stdout is a pipe, so `console0.allowsAnsi() == false`. This exercises the VT fallback path on every test run.
-- B4 (idempotent): set `info.pInner = &capture`, call `prt1.boot()`, and `info.pInner` is still `&capture`. Constructing a second `Printer` doesn't rebind either.
-- P1: with `message.pInner = &capture` (`allowsAnsi = true`), `prt1 << message << "Hello Printer 2!" << endLine` gives `"\x1b[32mHello Printer 2!\n\x1b[0m"`.
-- P2 (mid-line switch): `prt1 << info << "a" << error << "b" << endLine` gives `"\x1b[90ma\x1b[0m"` on `info`'s capture and `"\x1b[91mb\n\x1b[0m"` on `error`'s.
-- P3 (`nullptr` guard): a local `Printer p2;` has `pStream == nullptr`, and `p2 << "x"` emits nothing and doesn't crash.
-- Each test restores the bindings it changed.
-- Manual check, recorded in the handoff: running `printer_2` in a Windows 10 console shows "Hello Printer 2!" in dark green, and no raw `ESC[` text.
+**Done when** the `BindingTests` (`Tests/pc/test_binding.cpp`) and `PrinterTests` (`Tests/pc/test_printer.cpp`) suites pass, run from `main()` (§1, §4a). `main.cpp` defines `Printer prt1 = {};`, so `prt1` has booted before any test runs.
+
+`BindingTests` looks at the globals, read-only unless stated:
+- B1 (safe before boot): compile-time. `static_assert`s on `constexpr Stream probe{};` show that a `Stream` is constant-initialized with `pInner == &nullSink` and `idle`; the same is done for `NullStream` and `FileStream`. At run time, a local `Stream` that was never bound takes a byte without crashing (it goes to `nullSink`). This replaces the earlier "probe object defined before `prt1`", which can't work now that the tests run after `prt1` has booted.
+- B2: `info.pInner == &console0`, `message.pInner == &console0`, and `error.pInner == &file1` (the §9 example values). Colours equal the `cfg::*Color` constants.
+- B3: `console0.allowsAnsi()` matches an independent `GetConsoleMode` check on `STD_OUTPUT_HANDLE`: true in an interactive Windows 10 console, false when stdout is redirected. Run under `ctest`, or as `printer_2 > out.txt`, to exercise the fallback path.
+- B4 (idempotent boot): with the RAII snapshot (§4a), set `info.pInner = &capture`, call `prt1.boot()`, and check that `info.pInner` is still `&capture`. Constructing a local `Printer` doesn't rebind either. The snapshot restores `info` at the end of the test.
+
+`PrinterTests` uses only local objects: a local `Printer`, local `Stream`s bound to local `CaptureStream`s (`allowsAnsi = true`), with colours set per test:
+- P1: `p << msg << "Hello Printer 2!" << endLine`, with `msg.color = darkGreen`, gives `"\x1b[32mHello Printer 2!\n\x1b[0m"`.
+- P2 (mid-line switch): `p << a << "a" << b << "b" << endLine`, with `a` dark gray and `b` bright red, gives `"\x1b[90ma\x1b[0m"` on `a`'s capture and `"\x1b[91mb\n\x1b[0m"` on `b`'s.
+- P3 (`nullptr` guard): a fresh local `Printer` has `pStream == nullptr`, and `p << "x"` emits nothing and doesn't crash.
+
+Manual check, recorded in the handoff: running `printer_2` in a Windows 10 console shows the test summary, then "Hello Printer 2!" in dark green, and no raw `ESC[` text.
 
 ### Phase 6 — `Printer/Config/config_mc.hpp` and host compile-check
 1. Write the header as in spec §9. It holds choices only:
@@ -214,7 +229,7 @@ Only what the binding and colour rules need.
    - `McSink` with the role targets.
 
    Add `static_assert(isValid(usartNSettings))`.
-2. `test_config_mc_host.cpp` includes `Printer/Config/config_mc.hpp` directly, as every MC file will. It is built as a separate **compile-only** CMake target (`config_mc_check`, an object library that nothing links), not as part of `printer_tests`. The `cfg` constants are `inline constexpr`, so linking MC and PC definitions into one executable would break the one-definition rule.
+2. `test_config_mc_host.cpp` includes `Printer/Config/config_mc.hpp` directly, as every MC file will. It is built as a separate **compile-only** CMake target (`config_mc_check`, an object library that nothing links), not as part of `printer_2`. The `cfg` constants are `inline constexpr`, so linking MC and PC definitions into one executable would break the one-definition rule.
 
 **Done when** the check compiles and these `static_assert`s hold:
 - `cfg::sysclkFrequency_Hz == 8'000'000`, `cfg::cpuFrequency_MHz == 8`, `cfg::apb1Frequency_Hz == 8'000'000` and `cfg::apb2Frequency_Hz == 8'000'000`: the F103 reset clock (HSI, all dividers at 1), with no CPU boot.
@@ -222,6 +237,155 @@ Only what the binding and colour rules need.
 - `isValid(cfg::usart2Settings)` and `isValid(cfg::usart3Settings)`.
 
 **Limit:** this proves that `config_mc.hpp` is self-contained and that the derived frequencies match the reset clock. Checking them against the silicon limits (APB1 ≤ 36 MHz, SYSCLK ≤ 72 MHz) is the chip header's job, and checking them against the running clock is the clock check's job (spec §10, §13.27). Both arrive with the MC Hardware plan.
+
+## 4a. PC test suite (D-3)
+
+Our own simple suite, in the style of the old project's `Common/Tests/pc_Tests.cpp`, with two simplifications (spec §12, §13.39, §13.41).
+
+**Entry point.**
+- `Tests/Tests.hpp` declares `struct Tests { static int runAll(); };`. It is the only file the two suites have in common, and it holds no test code.
+- The PC build defines `runAll()` in `Tests/pc/pc_Tests.cpp`; the MC build will define it in `Tests/mc/mc_Tests.cpp`. Like every `pc_` / `mc_` pair, the linker selects one.
+- `main()` calls it first (§1). It returns the number of failed tests, so `main()` can return non-zero on failure.
+
+**One result type** (simplification 1). The old runner had about 20 near-identical `add()` overloads, one per suite type. Here every suite returns the same `TestResults`, so the global summary needs a single `add()`.
+
+```cpp
+// Tests/pc/TestResults.hpp — the one result type of the PC suite (PC code: std:: allowed).
+#pragma once
+
+#include <iostream>
+#include <string>
+#include <vector>
+
+struct TestResults {
+    explicit TestResults(const char* name) : suiteName(name) {}
+
+    const char* suiteName;
+    size_t total = 0;
+    size_t passed = 0;
+    size_t failed = 0;
+    std::vector<std::string> failedTestNames;
+    std::vector<std::string> passedTestNames;
+
+    void check(const std::string& name, bool ok) {
+        ++total;
+        if (ok) {
+            ++passed;
+            passedTestNames.push_back(name);
+        } else {
+            ++failed;
+            failedTestNames.push_back(std::string(suiteName) + ": " + name);
+            std::cout << "  FAIL " << name << std::endl;
+        }
+    }
+};
+```
+
+**Runner** (simplification 2: the old `bool` switches and `if` chain become one table, and every suite keeps its on/off switch). The summary keeps the old shape: per-suite breakdown, totals, duration, ✅ / ❌, failed names. Emoji are fine on the PC; the MC suite will print plain text.
+
+```cpp
+// Tests/pc/pc_Tests.cpp — PC suite runner.
+#include "Tests/Tests.hpp"
+#include "Tests/pc/TestResults.hpp"
+
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <string>
+#include <vector>
+
+TestResults runConfigTests();
+TestResults runColorTests();
+TestResults runBindingTests();
+TestResults runPrinterTests();
+
+namespace {
+
+struct Suite {
+    const char* title;
+    bool enabled;
+    TestResults (*run)();
+};
+
+struct GlobalTestResults {
+    size_t total = 0;
+    size_t passed = 0;
+    size_t failed = 0;
+    std::vector<std::string> failedTestNames;
+    std::vector<TestResults> suites;
+    double durationSeconds = 0.0;
+
+    void add(const TestResults& r) {
+        total += r.total;
+        passed += r.passed;
+        failed += r.failed;
+        failedTestNames.insert(failedTestNames.end(), r.failedTestNames.begin(), r.failedTestNames.end());
+        suites.push_back(r);
+    }
+
+    void printSummary() const {
+        std::cout << "\n=== GLOBAL TEST SUMMARY ===" << std::endl;
+        std::cout << "Per-suite breakdown:" << std::endl;
+        for (const auto& s : suites) {
+            std::cout << "  " << std::setw(30) << std::left << s.suiteName
+                      << " total=" << s.total << " passed=" << s.passed << " failed=" << s.failed << std::endl;
+        }
+        std::cout << "Total Tests: " << total << std::endl;
+        std::cout << "Passed: " << passed << std::endl;
+        std::cout << "Failed: " << failed << std::endl;
+        std::cout << "Duration: " << std::fixed << std::setprecision(3) << durationSeconds << " seconds" << std::endl;
+        std::cout << std::endl;
+        if (failed == 0) {
+            std::cout << "✅ ALL TESTS PASSED" << std::endl;
+        } else {
+            std::cout << "❌ SOME TESTS FAILED" << std::endl;
+            std::cout << "\nFailed tests:" << std::endl;
+            for (const auto& name : failedTestNames) {
+                std::cout << "  - " << name << std::endl;
+            }
+        }
+        std::cout << "=============================" << std::endl;
+    }
+};
+
+} // namespace
+
+int Tests::runAll() {
+    const Suite suites[] = {
+        {"Config Tests",  true, runConfigTests},
+        {"Color Tests",   true, runColorTests},
+        {"Binding Tests", true, runBindingTests},
+        {"Printer Tests", true, runPrinterTests},
+    };
+
+    std::cout << "\n=== RUNNING ALL TEST SUITES ===\n" << std::endl;
+    const auto start = std::chrono::steady_clock::now();
+
+    GlobalTestResults global;
+    for (const Suite& s : suites) {
+        if (!s.enabled) {
+            continue;
+        }
+        std::cout << "\n--- " << s.title << " ---" << std::endl;
+        global.add(s.run());
+    }
+
+    global.durationSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    global.printSummary();
+    return static_cast<int>(global.failed);
+}
+```
+
+**A suite** is one function in one `test_*.cpp` file: `TestResults runColorTests() { TestResults r("ColorTests"); …; return r; }`. Each phase that adds code adds its suite and one row to the runner's table. `TestResults` has a constructor taking the suite name, because brace-initializing only its first member (`TestResults r{"ColorTests"}`) trips `-Wmissing-field-initializers` under `-Wextra -Werror`, as the scratch build showed.
+
+**Isolation** (spec §12, §13.41). Every test is independent of every other:
+- **A test builds its own objects:** its own `Printer`, its own `Stream`s and its own `CaptureStream`s, as locals, and may drive them into any state, even an inconsistent one. Nothing it does reaches the next test.
+  - A local `Printer` is cheap: its constructor calls `boot()`, which is already a no-op after `prt1` booted (idempotent, spec §9).
+- **Tests don't touch the globals** (`info`, `message`, `error`, `fileN`, `console0`, `prt1`). The exception is `BindingTests`, which must look at them. It reads them, and where a test has to change one, it uses a small RAII snapshot that saves `pInner`, `color` and the idle state of `info` / `message` / `error`, and restores them at the end of the test.
+- **"Safe before boot" is proved at compile time,** because tests now run after `prt1` has booted. `static_assert`s on `constexpr Stream probe{};` (and the same for `FileStream` and `NullStream`) compile only if the type can be constant-initialized.
+  - Checked with g++ 15.2.0 on 2026‑10‑24 on a model of `BaseStream` / `Stream` with virtual functions: the probe compiles, and a type without a `constexpr` constructor fails with "the type … of 'constexpr' variable … is not literal".
+
+**`ctest`** (optional, proposed): `enable_testing()` plus `add_test(NAME printer_2 COMMAND printer_2)` runs the whole demo, tests included, and reports its exit code. Under `ctest`, stdout is redirected, which also exercises the VT-mode fallback (B3).
 
 ## 5. Decisions
 
@@ -231,7 +395,7 @@ Decisions this plan introduced. All five are now decided by BY; the provisional 
 |---|---|---|
 | D-1 | Where do the config headers live? | **Decided by BY, 2026‑10‑24 (spec §13.37):** `Printer/Config/` holds the common `config.hpp` and the platform-architecture `config_pc.hpp` / `config_mc.hpp`; chip specifics live in `Hardware/`. Supersedes the earlier default `Config/` outside the library |
 | D-2 | How does common code find the platform header? | **Decided by BY, 2026‑10‑24 (spec §13.37):** it doesn't. Common `.cpp` files include only common headers; platform `.cpp` files are selected by CMake (link-time polymorphism). Supersedes the `config_platform.hpp` forwarders |
-| D-3 | Test suites and frameworks (handoff P-10) | **Decided by BY, 2026‑10‑24 (spec §13.39):** the PC suite is our own simple suite, similar to the old project's, registered with `ctest`; no external framework (Catch2 / GoogleTest are not used). The MC suite is a brand-new suite, written later in the MC Hardware plan. BY's wording: "mostly agree. For PC we will write own simple suite similar to the old one. For MC we will write brand-new test suite later" |
+| D-3 | Test suites and frameworks (handoff P-10) | **Decided by BY, 2026‑10‑24 (spec §13.39):** the PC suite is our own simple suite, similar to the old project's; no external framework (Catch2 / GoogleTest are not used). The MC suite is a brand-new suite, written later in the MC Hardware plan. BY's wording: "mostly agree. For PC we will write own simple suite similar to the old one. For MC we will write brand-new test suite later". **Refined the same day (spec §13.41, §4a):** all tests run from `main()` (no separate executable); every suite uses one shared `TestResults` type; emoji are fine in the PC summary, while the MC suite prints plain text; every test is isolated and builds its own `Printer`, so "even breaking up to inconsistent state" doesn't affect the next one |
 | D-4 | PC `FileStream`'s `ofstream` storage | **Decided by BY, 2026‑10‑24 ("agree"):** a function-local static array of nine `std::ofstream` in `pc_FileStream.cpp`, constructed on first `open()`; `FileStream` holds an index and an `isOpen` flag. This keeps constant initialization (spec §4) and keeps `<fstream>` out of the common header (spec §1.1). Revised earlier the same day: the first proposal, "aligned storage + placement-new", would have needed `<new>` |
 | D-5 | The bytes `endLine` emits, and their order | **Decided by BY, 2026‑10‑24 ("agree", spec §13.40):** `'\n'` first, then `resetColor()`. Resetting first would leave the stream idle, so the newline would re-emit the colour (§5). The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan |
 
@@ -277,5 +441,5 @@ The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot
    - `UsartStream<N>`, polled first, then DMA. It is tested on the PC against the static registers first; a timed model with simulated interrupts follows when a driver path waits on a flag.
    - The bank-size edge-case tests promised in spec §13.34 (`bankSize` 1–4, head / body / tail states). They decide whether `printerMinBankSize` can drop from 4 to 1.
    - The first ARM build (`mc` preset).
-   - The MC test suite (`Tests/mc/`), with its own framework and its own way of building and running, independent of the PC suite (spec §12).
+   - The brand-new MC test suite (`Tests/mc/`, with `mc_Tests.cpp` defining `Tests::runAll()`). It runs from `main()` before the endless loop, prints plain text rather than emoji, and is independent of the PC suite (spec §12, §13.39, §13.41).
 3. **File markers plan,** once §13.2, §13.16 and §13.17 are decided.

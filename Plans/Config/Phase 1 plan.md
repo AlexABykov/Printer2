@@ -1,6 +1,6 @@
 # Phase 1 Plan — `Printer/Config/config.hpp` (common configuration)
 **Status:** Draft, awaiting BY's approval.  
-**Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only; include check and test target moved to Phase 2; config moved to `Printer/Config/`, so no CMake change at all)  
+**Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only; include check and test target moved to Phase 2; config moved to `Printer/Config/`, so no CMake change at all; Phase 2 turns the checks into the ConfigTests suite run from main)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 1 (and the remainder of Phase 0, §2 below)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §2, §5, §7, §8, §9 (`config.hpp`), §13.13, §13.29, §13.32, §13.33, §13.35  
 **Rules:** [`AGENTS.md`](../../AGENTS.md) §2 (MC and Common code)
@@ -198,7 +198,7 @@ int main() {
 }
 ```
 
-These are PC-suite tests (`AGENTS.md` §4). They may use anything the PC offers. They happen to need nothing beyond `config.hpp`, which also shows that the header compiles alone. In this phase they aren't part of any CMake target; Phase 2 adds them to `printer_tests`.
+These are PC-suite tests (`AGENTS.md` §4). They may use anything the PC offers. They happen to need nothing beyond `config.hpp`, which also shows that the header compiles alone. In this phase they aren't part of any CMake target. Phase 2 turns them into the first PC suite, `ConfigTests`, run from `main()` (base plan §4a): the `static_assert`s move into `Tests/pc/test_config.cpp`, and the address check becomes a `check()` against `Tests/pc/test_config_tu2.cpp`.
 
 ### 3.3 Build and run
 
@@ -259,7 +259,7 @@ The earlier deviations from the spec sketch were settled as follows, and spec §
 
 - **Silent copies instead of one object.** If someone later writes plain `constexpr` for a new variable, each translation unit gets its own copy. Nothing breaks for integers, but addresses differ. The two-TU check covers `defaultFileName` only. A code-review rule covers the rest: every `cfg::` variable is `inline constexpr`.
 - **No automatic include check until Phase 2.** Between Phase 1 and Phase 2, a forbidden include in `config.hpp` is caught only by the manual `grep` (§3.3) and by review.
-- **The checks are not rebuilt automatically.** They have no CMake target in Phase 1, so a later edit to `config.hpp` must be followed by the §3.3 `g++` command by hand, until Phase 2 adds `printer_tests`.
+- **The checks are not rebuilt automatically.** They have no CMake target in Phase 1, so a later edit to `config.hpp` must be followed by the §3.3 `g++` command by hand, until Phase 2 runs them from `main()` as `ConfigTests`.
 - **Unqualified names from `<cstdint>`** rely on GCC providing the global names (§3.1 notes). Both the host MinGW and `arm-none-eabi-gcc` do. A different compiler would need a check.
 - **`using namespace cfg` in the test** is confined to an anonymous namespace in a test file. Production code always writes `cfg::`.
 - **Toolchain not on the PATH.** The §3.3 commands need CLion's MinGW and CMake `bin/` directories on the PATH (paths in the build-status note). Otherwise, build the demo from CLion.
@@ -270,4 +270,4 @@ Phase 2 of the base plan:
 - the `PRINTER_PLATFORM` switch and `CMakePresets.json` (`pc`, `mc`);
 - link-time platform selection (`pc_*` or `mc_*` sources) and the `printer` library target;
 - the include allow-list check (`printer_check_includes`) over every Common and MC source;
-- `printer_tests` (PC suite) under `ctest`, which picks up the two Phase 1 test files.
+- the PC suite skeleton (`Tests/Tests.hpp`, `TestResults.hpp`, the `pc_Tests.cpp` runner) and `ConfigTests`, the two Phase 1 test files turned into the first suite, run from `main()` (base plan §4a).

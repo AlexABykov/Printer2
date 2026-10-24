@@ -90,9 +90,12 @@ There are **two absolutely independent test suites, one per platform.** They sha
 
 | Suite | Where | Rules |
 |---|---|---|
-| **PC** | `Tests/pc/` | Our own simple suite, similar to the old project's, run by `ctest`, with no external test framework (decision 13.39). Otherwise it may use everything the PC offers: the standard library, files, processes, the Windows or Linux API. It also tests the Common code, compiled for the host. That a Common file is clean is checked by the CMake include check (§2.4), not by the tests |
-| **MC** | `Tests/mc/` | A brand-new suite, written later (decision 13.39). It does its own job, under the MC and Common rules (§2), and is built and run by its own means, independently of the PC suite |
+| **PC** | `Tests/pc/` | Our own simple suite, similar to the old project's, with no external test framework (decision 13.39). Otherwise it may use everything the PC offers: the standard library, files, processes, the Windows or Linux API. The summary may use emoji. It also tests the Common code, compiled for the host. That a Common file is clean is checked by the CMake include check (§2.4), not by the tests |
+| **MC** | `Tests/mc/` | A brand-new suite, written later (decision 13.39). It does its own job, under the MC and Common rules (§2), and prints plain text, not emoji |
 
+- **Tests run from `main()`** (decision 13.41). There is no separate test executable. `Tests/Tests.hpp` declares `struct Tests { static int runAll(); };`, the only file the two suites share. It holds no test code, and `pc_Tests.cpp` or `mc_Tests.cpp` defines it. `main()` calls it first, on the MC before the endless loop, and it returns the number of failed tests.
+- **One result type per suite family.** Every PC suite returns the same `TestResults` (`Tests/pc/TestResults.hpp`) and counts with `check(name, ok)`. A new suite is one function in one `test_*.cpp` file plus one row in the runner's table.
+- **Every test is isolated** (decision 13.41). A test builds its own `Printer`, `Stream`s and `CaptureStream`s as locals, and may break them freely; nothing it does may reach the next test. Tests don't change the global keyword streams or `prt1`. A binding test that must change one restores it with an RAII snapshot.
 - Production code contains no test hooks. Tests observe behaviour through public interfaces, for example a `CaptureStream` installed as a stream's inner sink (spec §12).
 - Do not silently change what a test checks or what output it expects. If a test is re-baselined, say why in the handoff entry.
 
