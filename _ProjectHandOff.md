@@ -176,6 +176,77 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-24 (session 2) — **Config Specification reviewed and revised; `Config Base Plan.md` written and awaiting BY's approval. Still no code. Next is plan approval, then Phase 0.**
+
+**State.** Documentation only. No source file was created or changed and nothing was built. `Printer/` is still empty, and the root `config.h` still holds the `main()` stub. The documents are committed by BY up to `ee8bc0e`; only this entry is not yet committed. `Plans/Config/Config Request.md` is unchanged (Status: Discussion; only BY can change it). Toolchain note: in the shell used this session, `g++` and `cmake` are not on the PATH, and no `arm-none-eabi` toolchain was found. Builds are expected through CLion's bundled MinGW 15.2.
+
+### What changed
+
+- **`Plans/Config/Config Specification.md`:**
+  - Reviewed against the Request, the README and this file, then revised in several rounds (2026‑10‑23 / 24).
+  - Retitled "Printer Configuration Specification". §9 is the configuration proper; §§3–8 and §§10–12 are Printer-wide context.
+  - Technical fixes:
+    - BRR uses the APB clock, not the CPU clock.
+    - No `constexpr` register pointers; addresses are integers, cast at runtime.
+    - Windows VT mode is enabled for console colour.
+    - Banks are sized per USART instance.
+    - The colour path compiles out with `if constexpr`.
+    - A null sink makes printing before boot safe.
+  - Added header sketches for `config.hpp`, `config_mc.hpp` and `config_pc.hpp`.
+  - Added §10 Hardware: chip files, the MC boot sequence, the clock check and the Printer's assert.
+  - Added §11 CMake presets.
+  - §13 split into a Decisions table (owner wording, dated) and stable-numbered open items.
+- **`Plans/Config/Config Base Plan.md`:** new. It is the first implementation slice, Phases 0–6:
+  - Phase 0: repo prep (`main()` out of `config.h`, `Config/`, `.gitignore`).
+  - Phase 1: `config.hpp`.
+  - Phase 2: CMake, `config_platform.hpp` selection, `pc` / `mc` presets.
+  - Phase 3: `config_pc.hpp`.
+  - Phase 4: minimal stream core (`BaseStream`, `NullStream`, `Stream`, `ConsoleStream`, PC `FileStream`).
+  - Phase 5: PC boot, binding and a minimal `Printer` that runs `prt1 << message << "Hello Printer 2!" << endLine;`.
+  - Phase 6: `config_mc.hpp`, checked on the host.
+
+  Every phase lists its test cases and its done criteria. MC hardware, chip files and startup code are deferred to a separate MC Hardware plan.
+- **`_ProjectHandOff.md`:** added a dated correction under the session 1 entry (`Config Demand.md` was renamed `Config Request.md`), and this entry.
+
+### Decisions
+
+Recorded in spec §13 "Decisions" with the owner's wording; the summary here is for orientation.
+
+| ID | Decision | Owner wording / date |
+|---|---|---|
+| 13.5 | Keywords `info` / `message` / `error` (replace `streamLog` / `streamMessage` / `streamError`; avoid C-library clashes such as `log`) | "streamMessage appeared harder to remember. Let's try to simplify keywords", 2026‑10‑24 |
+| 13.6 | GPIO setup (remap if needed, GPIO for used interfaces) is owned by the Printer's MC boot | 2026‑10‑24 |
+| 13.21 | PC emulates registers with static variables; a timed simulation with interrupts may replace them | 2026‑10‑24 |
+| 13.23 | Printer boots only the hardware it needs; **CPU boot (PLL, clocks) is out of scope**, and the Printer must start without it, at the reset clock (F103: HSI 8 MHz). This revised a same-day version that included the CPU boot | "Printer must boot needed hardware only. CPU boot is out of scope", 2026‑10‑24 |
+| 13.24 | Public `mc_chip.hpp` / `pc_chip.hpp` are the single chip-selection points; `mc_<chip>.hpp` / `pc_<chip>.hpp` / `<chip>_regs.hpp`; PC-only chip headers allowed | 2026‑10‑24 |
+| 13.26 | HSE start failure is outside the Printer (it belongs to the CPU boot) | follows from 13.23, 2026‑10‑24 |
+| 13.27 | Clock check: the Printer asserts if the running clock differs from `cfg::` at boot, or if it changes later; always on | "assert, we are on a strict MC territory", 2026‑10‑24 |
+| 13.28 | User code is `#include "Printer/Printer.hpp"` + `Printer prt1 = {};`; the constructor boots; `boot()` is idempotent; `pStream` is `nullptr`-safe; two CMake configurations (PC, MC) | 2026‑10‑24 |
+| 13.29 | Headers are `.hpp` throughout, each with a `__cplusplus` guard | "I'd go with .hpp throughout too", 2026‑10‑24 |
+| 13.30 | Bare metal only: no vendor or CMSIS headers | 2026‑10‑24 |
+| 13.32 | `bankSize` = one bank; RAM = 2 × `bankSize`; 0 = polled; no even-size rule | "B with bankSize – agree", 2026‑10‑24 |
+| 13.33 | Minimum `bankSize` is 4 until sizes 1–3 are proven | "let's say minimal bank size is 4 elements, but we promise to test it somehow later", 2026‑10‑24 |
+| Plan D-2 | Keep `Config/pc/config_platform.hpp` / `Config/mc/config_platform.hpp` (include-path selection) | 2026‑10‑24 |
+
+Also kept from the 2026‑10‑23 draft: 13.3, 13.4, 13.7–13.10. Of the earlier open decisions in Part 1 §6, the spec effectively settles P-1 (names), P-2 (class with `operator<<`), P-12 (keep the config header, move `main()` out) and P-14 (separate USART sink instances). They are not marked decided here, because BY has not stated them as P-item decisions.
+
+### Open
+
+1. **BY's approval of `Config Base Plan.md`**, including its own decisions: D-1 (`Config/` location), D-3 (assert-based tests + `ctest`), D-4 (PC `FileStream` `ofstream` in aligned storage), and D-5 (`endLine` sends `'\n'` and then resets the colour).
+2. **Spec §13.31:** who provides the bare-metal startup code (vector table, `Reset_Handler`), and the optional `cpuBoot()` hook plus a small 72 MHz CPU-boot example. Needed before the MC Hardware plan.
+3. **Spec §13.34:** the promised bank-size 1–3 edge-case tests (head / body / tail states) decide whether the minimum drops to 1.
+4. Remaining spec open items: 13.1, 13.2 (file markers), 13.11 / 13.12 / 13.25 (naming and visibility of the boot functions), 13.13 (16-colour model), 13.14 (unit suffixes), 13.15 (direct `printf` vs `prt1` state), 13.16 / 13.17 / 13.19 (files on MC, implicit open, `name` lifetime), 13.18 (`hold` by example), 13.20 (role mapping via enums), 13.22 (`flushDma` and `UartSettings` on PC, ISR writes, P-13).
+
+### Notes for the incoming developer
+
+- **Read the spec's §13 Decisions table before the body text.** Several decisions were revised during the session: the keyword names, the CPU boot, and `bufferSize` → `bankSize`. The table records both the current and the superseded wording.
+- **Two traps found during review, both handled in the plan:**
+  - (a) A PC `FileStream` holding a `std::ofstream` member is not constant-initialized, which breaks the "safe before boot" rule. Hence D-4.
+  - (b) `endLine` must send `'\n'` *before* resetting the colour. In the other order, the stream is idle when the newline arrives, so the newline re-emits the colour.
+- **`prt1` is dynamically initialized** (its constructor boots the hardware). Printing through `prt1` from another global's constructor is undefined behaviour; only the streams themselves are safe before boot.
+- **The MC check in Phase 6 must stay a compile-only target.** Linking the MC and PC `inline constexpr` `cfg::` definitions into one executable would violate the one-definition rule.
+- Start with Phase 0 only after BY approves the plan, and record the compiler and the result of every build here (house rule 5).
+
 ## Mailbox entry — 2026-10-20 (session 1) — **`Plans/Config/Config Demand.md` file created; the project is still a skeleton; Next is the demand discussion; then v0 stream API.**
 
 > **Correction (2026-10-23).** `Config Demand.md` was later renamed `Plans/Config/Config Request.md`
