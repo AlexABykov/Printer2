@@ -176,6 +176,71 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-25 (session 3) — **Milestone: the Printer's user API is settled: `prt2`, keywords `message` / `error` / `file0` … `file8`, formatted output on the printer (`prt2.message` / `error` / `file(index, …)`), the flush model, blocking writes with stuck detection, `hold`. Documentation only; next is Phase 0 / Phase 1.**
+
+**State.** Documentation only. No source file was created or changed and nothing was built; the repository still has the root `config.h` and `main.cpp`, and `Printer/` is empty. All changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md` is unchanged.
+
+### What changed
+
+- **`Plans/Config/Config Specification.md`:**
+  - **§3 and §6:** formatted output is now a method on the printer: `prt2.message(fmt, …)`, `prt2.error(fmt, …)` and `prt2.file(index, fmt, …)`. `stream.printf` and `BaseStream::printf` are removed. §6 is retitled "Formatted output".
+  - **§4:** the keyword table has `message` (like `std::cout`), `error` (like `std::cerr`) and `file0` … `file8`; `info` is gone.
+  - **§4.1, new:** "`endLine`, `flush` and `hold`": the flush table, flush per hardware stream, `autoFlush`, and `hold` with BY's use case.
+  - **§5:** `endLine` order is `'\n'`, `resetColor()`, flush. A `'\n'` byte doesn't reset the colour. Added what colour is for on the PC.
+  - **§7:** writes block, with no loss; stuck detection; no ISR code in the Printer.
+  - **§9:** the role targets drop `info`, and `messageAutoFlush` / `errorAutoFlush` are added to both platform configs. `cpuFrequency_MHz` is now the stuck-detection budget.
+  - **Everywhere:** `prt1` → `prt2`, except in quoted owner wording and history.
+  - **§13:** new decisions 13.15, 13.18, "13.22 (part)" and 13.43–13.49. Dated notes were added on 13.4, 13.5, 13.8, 13.9, 13.10, 13.27, 13.28 and 13.40. New open items are 13.50–13.53. Open items 13.15 and 13.18 now point to the Decisions table, 13.22 is updated, and 13.34 now says "blocking wait and stuck drop".
+- **`Plans/Config/Config Base Plan.md`:**
+  - `prt2` throughout.
+  - The `Stream` globals are `message` / `error`, with an `autoFlush` flag.
+  - `endLine` flushes.
+  - `CaptureStream` records flush marks.
+  - Tests B2, B4, P1 and P2 are updated, and P4 (`autoFlush`) is new.
+  - D-5 has a dated revision note.
+  - §6 and §8 are updated.
+- **`README.md`:** the status date, `prt2`, the keywords, the error example (the old claim that `error.printf(...)` printed "the same line" was wrong: it printed no newline), and new bullets for `hold`, flushing, formatted output and blocking output.
+- **`AGENTS.md`:** `prt1` → `prt2` (§2.3, §4).
+
+**Tests re-baselined (plan only, nothing is built):** P1 and P2 now expect a flush mark after `endLine`, because §13.40 was revised so that `endLine` flushes. B2 and B4 use `message` instead of `info`, because `info` no longer exists.
+
+### Decisions
+
+Recorded in spec §13 with BY's wording.
+
+| ID | Decision | Date |
+|---|---|---|
+| 13.43 | The printer instance is `prt2`, not `prt1`: "they are not fully compatible" | 2026‑10‑25 |
+| 13.44 | Keywords `message` (≈ `std::cout`) and `error` (≈ `std::cerr`) plus `file0` … `file8`; `info` dropped as redundant; `error` is a role, bindable to any sink | 2026‑10‑24 / 25 |
+| 13.45 | `prt2.message(…)`, `prt2.error(…)`, `prt2.file(index, …)`; no "printf" in the name ("not honest"); no automatic newline; the target is restored after the call; a bad file index prints a line to `error` | 2026‑10‑24 / 25 |
+| 13.46 | `<< flush`, `<< endLine`, `prt2.flush(stream)` flush one hardware stream; `prt2.flush()` flushes all; flush blocks; `'\n'` is just a byte. This settles P-3 | 2026‑10‑25 |
+| 13.47 | Blocking writes with no loss; a stuck stream drops bytes, is re-checked on every write, and returns at once while stuck | 2026‑10‑25 |
+| 13.48 | No ISR code in the Printer: interrupts are enabled for the DMA only | 2026‑10‑25 |
+| 13.49 | `error` flushes itself like `std::cerr`; `autoFlush` is a per-role config constant | 2026‑10‑25 |
+| 13.18 | `hold` makes the next target switch temporary | 2026‑10‑25 |
+| 13.15 | No direct stream printing; formatted output goes through `prt2` (follows from 13.45) | 2026‑10‑25 |
+| 13.22 (part) | Flush on the PC: `std::cout.flush()` / `ofstream::flush()`; on the MC every stream, files included, is a USART link | 2026‑10‑25 |
+
+Revised by these decisions: 13.4 (superseded), 13.5, 13.8, 13.9 (superseded), 13.10, 13.28, 13.40, and §7's "backpressure by loss" rule.
+
+### Open
+
+1. **Spec 13.50, stuck-detection details** (provisional): progress = `CNDTR` moves or `TXE` sets; budget = a few byte-times from `cfg::cpuFrequency_MHz`. BY may describe the old Printer's mechanism so it can be copied.
+2. **Spec 13.51, flush details** (provisional):
+   - `prt2.flush()` visits each hardware sink once.
+   - `prt2.flush(stream)` takes a `BaseStream&`.
+   - `autoFlush` flushes after each `<<` item, not only at `'\n'`.
+3. **Spec 13.52:** unsupported format specifiers are printed literally (provisional).
+4. **Spec 13.53:** 8 or 9 files? BY's wording mentioned "a bank of 8 files"; the spec keeps `file0` … `file8` until confirmed.
+5. **Still open from before:** BY's approval of `Config Base Plan.md` and `Phase 1 plan.md`; spec 13.1, 13.2, 13.11, 13.12, 13.14, 13.16, 13.17, 13.19, 13.20, the rest of 13.22, 13.25, 13.31, 13.34, 13.38 and 13.42.
+
+### Notes for the incoming developer
+
+- **Read spec §4.1 before writing any `Printer` code.** It is the single place where `endLine`, `flush`, `autoFlush` and `hold` meet.
+- **Inside `Printer`, the method names hide the keywords:** a member function must write `::message`, `::error` and `::flush` to reach the global streams and keyword (spec §6).
+- **Blocking writes need a PC register model that can stall.** Without one, the stuck path can't be tested (base plan §8).
+- **Part 1 of this file is out of date** on names and flushing: `cons1`, P-1 and P-3. The spec's §13 is authoritative.
+
 ## Mailbox entry — 2026-10-24 (session 2) — **Config Specification reviewed and revised; `Config Base Plan.md` written and awaiting BY's approval. Still no code. Next is plan approval, then Phase 0.**
 
 **State.** Documentation only. No source file was created or changed and nothing was built. `Printer/` is still empty, and the root `config.h` still holds the `main()` stub. The documents are committed by BY up to `ee8bc0e`; only this entry is not yet committed. `Plans/Config/Config Request.md` is unchanged (Status: Discussion; only BY can change it). Toolchain note: in the shell used this session, `g++` and `cmake` are not on the PATH, and no `arm-none-eabi` toolchain was found. Builds are expected through CLion's bundled MinGW 15.2.

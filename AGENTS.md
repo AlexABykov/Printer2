@@ -64,7 +64,7 @@ The microcontroller has **no operating system**, very little RAM, and a poor hea
 ### 2.3 Required style
 
 - **Configuration is data:** `inline constexpr` variables in `namespace cfg`, with no assignments at namespace scope.
-- **Streams and `nullSink` are constant-initialized** (`constexpr` constructors), so they are safe to use before boot. `prt1` is the one dynamically initialized global, because its constructor boots the hardware.
+- **Streams and `nullSink` are constant-initialized** (`constexpr` constructors), so they are safe to use before boot. `prt2` is the one dynamically initialized global, because its constructor boots the hardware.
 - **Headers are `.hpp`** (C++17, not C-compatible) and start with `#pragma once` alone.
 - **Naming** (spec §2): types `PascalCase`; instances, functions and `constexpr` values `camelCase`; macros `SCREAMING_SNAKE_CASE`, only when really needed; physical quantities may end in a unit suffix (`cpuFrequency_MHz`).
 
@@ -95,7 +95,7 @@ There are **two absolutely independent test suites, one per platform.** They sha
 
 - **Tests run from `main()`** (decision 13.41). There is no separate test executable. `Tests/Tests.hpp` declares `struct Tests { static int runAll(); };`, the only file the two suites share. It holds no test code, and `pc_Tests.cpp` or `mc_Tests.cpp` defines it. `main()` calls it first, on the MC before the endless loop, and it returns the number of failed tests.
 - **One result type per suite family.** Every PC suite returns the same `TestResults` (`Tests/pc/TestResults.hpp`) and counts with `check(name, ok)`. A new suite is one function in one `test_*.cpp` file plus one row in the runner's table.
-- **Every test is isolated** (decision 13.41). A test builds its own `Printer`, `Stream`s and `CaptureStream`s as locals, and may break them freely; nothing it does may reach the next test. Tests don't change the global keyword streams or `prt1`. A binding test that must change one restores it with an RAII snapshot.
+- **Every test is isolated** (decision 13.41). A test builds its own `Printer`, `Stream`s and `CaptureStream`s as locals, and may break them freely; nothing it does may reach the next test. Tests don't change the global keyword streams or `prt2`. A binding test that must change one restores it with an RAII snapshot.
 - Production code contains no test hooks. Tests observe behaviour through public interfaces, for example a `CaptureStream` installed as a stream's inner sink (spec §12).
 - Do not silently change what a test checks or what output it expects. If a test is re-baselined, say why in the handoff entry.
 
