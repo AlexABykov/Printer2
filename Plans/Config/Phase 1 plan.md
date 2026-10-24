@@ -19,7 +19,7 @@ Write the common configuration header exactly once, so the later phases only inc
 
 **Done when:**
 - [ ] `Config/config.hpp` exists with the content in §3.
-- [ ] `config_common_check` builds with `-Wall -Wextra -Wpedantic -Werror -nostdinc++ -fno-exceptions -fno-rtti`, and every `static_assert` in `Tests/test_config_common.cpp` holds.
+- [ ] `config_common_check` builds with `-Wall -Wextra -Wpedantic -Werror -nostdinc++ -fno-exceptions -fno-rtti`, and every `static_assert` in `Tests/pc/test_config_common.cpp` holds.
 - [ ] `config_common_check.exe` exits 0 (one `cfg::defaultFileName` across two translation units).
 - [ ] The demo `printer_2` still builds and exits 0.
 - [ ] Manual one-off check: a C file that includes `config.hpp` fails with `#error "config.hpp is a C++ header"`.
@@ -115,7 +115,7 @@ Notes on the code:
 
 ### 3.2 Write the checks
 
-`Tests/test_config_common.cpp` holds the compile-time checks. It includes **only** `config.hpp`.
+`Tests/pc/test_config_common.cpp` holds the compile-time checks. It includes **only** `config.hpp`.
 
 ```cpp
 // Phase 1 check: config.hpp compiles alone, and its constants and isValid() behave as specified.
@@ -180,7 +180,7 @@ static_assert(sameText(defaultFileName, "noname.log"));
 const char* const* defaultFileNameAddressHere() { return &cfg::defaultFileName; }
 ```
 
-`Tests/test_config_common_main.cpp` is the second translation unit, which checks the `inline constexpr` claim at run time:
+`Tests/pc/test_config_common_main.cpp` is the second translation unit, which checks the `inline constexpr` claim at run time:
 
 ```cpp
 // Phase 1 check, second translation unit: inline constexpr gives one cfg::defaultFileName for
@@ -225,8 +225,8 @@ target_include_directories(printer_2 PRIVATE
 
 # Phase 1 check: config.hpp alone. Folded into printer_tests in Phase 2.
 add_executable(config_common_check
-    Tests/test_config_common.cpp
-    Tests/test_config_common_main.cpp
+    Tests/pc/test_config_common.cpp
+    Tests/pc/test_config_common_main.cpp
 )
 
 target_include_directories(config_common_check PRIVATE

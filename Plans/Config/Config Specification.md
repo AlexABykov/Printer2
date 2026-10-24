@@ -29,7 +29,7 @@ The MC has no operating system, very little RAM, and only a poor heap allocator 
 - Common and MC sources are compiled with `-nostdinc++`, which makes any C++ library header a compile error while leaving the compiler's C headers available. This was checked with g++ 15.2.0 on 2026‑10‑24: `<stdint.h>`, `<stddef.h>` and `<stdarg.h>` compile; `<cstdint>` and `<new>` fail with "No such file or directory".
 - The MC link provides no `_sbrk`, so any use of the heap becomes a link error instead of a runtime failure.
 
-**PC-only code** (`pc_*` files) may use the standard library: `std::cout`, `std::ofstream`, `std::abort()` and the Windows API. It may not leak those types into common headers (§13.36).
+**PC-only code** (`pc_*.cpp` files, and headers included only by them) is free to use the full standard library, the heap, exceptions and the OS APIs (Windows, POSIX): the PC is a big developer's machine (§13.36). The boundary is that no `std` type, OS type or PC library header appears in any header that common code includes. A header follows the strictest area of any file that includes it, so `config_pc.hpp` and the PC chip headers follow the common rules. The working rules for each code area are in the repository's `AGENTS.md`.
 
 ## 2. Naming conventions
 
@@ -348,9 +348,12 @@ Until `printerInit()` has run, every stream writes to `nullSink` (§4).
 
 ## 12. Testing
 
+- **Two absolutely independent test suites, one per platform** (§13.36). They share no test code, no helpers and no framework.
+  - **PC suite** (`Tests/pc/`): may use everything the PC offers (the standard library, any test framework, files, processes, Windows or Linux APIs). It also tests the common code, compiled for the host. A PC test that proves a common header is clean builds it with `-nostdinc++`.
+  - **MC suite** (`Tests/mc/`): does its own job under the §1.1 rules, built and run by its own means.
 - Tests target the new API only. The old `set_sendByte_*_override` hooks are **not** carried over; the new project will have a different test fracture.
-- Recommended hook: a `CaptureStream : BaseStream` that records raw bytes, installed by tests either as a `pInner` on a `Stream` or directly as `prt1.pStream`. No test hook lives inside production `UsartStream` / `ConsoleStream`.
-- Exact framework and file layout TBD (follow the new project's conventions).
+- Recommended hook: a `CaptureStream : BaseStream` that records raw bytes, installed by tests either as a `pInner` on a `Stream` or directly as `prt1.pStream`. No test hook lives inside production `UsartStream` / `ConsoleStream`. Each suite has its own `CaptureStream`.
+- The framework of each suite is chosen in its own plan.
 
 ## 13. Decisions and open items
 
@@ -379,6 +382,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.32 | **`bankSize` replaces `bufferSize`.** The value is the size of **one** bank, and two banks are created: RAM = 2 × `bankSize`; 0 = polled, no DMA (§7). There is no even-size rule; the minimum is §13.33. `printerMaxDmaBuffer` is renamed `printerMaxBankSize` (≤ 65535, the CNDTR limit). The earlier text (total size, split in two, must be even) is superseded. | "Or result is not divide by 2, but multiply - create 2 buffers of given size. Let's decide"; "B with bankSize – agree", 2026‑10‑24 |
 | 13.33 | **Minimum `bankSize` is 4** (when not 0), enforced by `isValid()` and by a `static_assert` in `UsartStream<N>` (§7). Banks of 1–3 bytes are formally meant to be supported, but they wait until the "head / body / tail" algorithm from the previous project is proven on them (§13.34). | "Formally, minimal bank size 1 must be supported … But I'm not sure that old algorithm … can handle this case correctly … let's say minimal bank size is 4 elements, but we promise to test it somehow later", 2026‑10‑24 |
 | 13.35 | **No C++ standard library and no heap in common and MC code** (§1.1). Only the compiler's freestanding C headers (`<stdint.h>`, `<stddef.h>`, `<stdarg.h>`, …). No `new` / `malloc`, no exceptions, no RTTI, trivial destructors for globals. Enforced with `-nostdinc++` and an MC link without `_sbrk`. | "MC platform has no operation system and a very poor heap allocator … there is no heap defragmenter. So, using std:: is prohibited", 2026‑10‑24 |
+| 13.36 | **PC code is free; tests are split per platform.** `pc_*` code may use the standard library, the heap and the OS APIs, as long as nothing PC-specific reaches a header that common code includes (§1.1). Tests are two independent suites, PC and MC (§12). The rules are also written down in `AGENTS.md`. | "PC platform branch can use std:: and feel free on a big developers PC. Tests are separated - absolutely independent suite for each platform. PC tests can use all PC Windows/Linux capabilities. MC tests will do their own job", 2026‑10‑24 |
 
 ### Open items
 
@@ -406,4 +410,3 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 - **13.25** **The two boot functions.** The entry point is decided (§13.28): the `Printer` constructor calls the idempotent `boot()`, which runs `printerPlatformInit()` and then `printerInit()` (§9). Still to decide: should the two free functions stay public (for tests and for projects without `prt1`), or become private to `boot()`? And should `printerPlatformInit()` be renamed to match, e.g. `bootPlatform()` (this also answers §13.11)?
 - **13.31** **Startup code and the CPU-boot hook.** Bare metal (§13.30) needs a vector table and a `Reset_Handler` that copies `.data`, clears `.bss`, runs the global constructors and calls `main()`. Who provides it: the Printer project, or the host project? It is the one place that can guarantee "CPU boot before `prt1`'s constructor" (§10). Proposal: the Printer project ships a startup file for each MC chip. Its `Reset_Handler` calls an optional weak `cpuBoot()` before the global constructors. A small CPU-boot example (72 MHz, flash latency first) defines `cpuBoot()` and shows `cfg::sysclkFrequency_Hz` / `cpuFrequency_MHz` being updated to match; the running clock check (§13.27) catches a mismatch. Decide.
 - **13.34** **Bank sizes 1–3: the promised test.** Before `printerMinBankSize` can drop below 4, the DMA bank algorithm needs edge-case tests on the PC register model (§10), for `bankSize` = 1, 2, 3 and 4. They must cover: a write that exactly fills a bank; a write one byte longer than a bank; a swap while DMA is still busy (backpressure and drop); `updateUsartX()` on a partly filled bank; and the "head", "body" and "tail" states each being empty. The tests belong to the MC Hardware plan. If they pass, the minimum drops to 1; if not, the algorithm is fixed first or the minimum stays. Open until the tests run.
-- **13.36** **Standard library in PC-only files.** §1.1 lets `pc_*` files use `std::cout`, `std::ofstream` and `std::abort()`, because the PC has an OS and a real heap, and the spec already relies on them (§3, §8, §10). The rule that keeps the MC safe is that no `std` type appears in a common header. Confirm, or require the PC side to avoid the standard library too (for example, `WriteFile` / `CreateFile` from the Windows API instead of `std::cout` / `std::ofstream`).

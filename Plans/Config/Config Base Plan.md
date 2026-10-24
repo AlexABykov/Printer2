@@ -1,6 +1,6 @@
 # Config Base Plan — first implementation slice
 **Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4)  
+**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4; no C++ library in common/MC code; separate PC and MC test suites)  
 **Implements:** [`Config Specification.md`](Config%20Specification.md) §9 (configuration), plus the minimum of §§3–5, §10 and §11 needed to prove it end to end.  
 **Request:** [`Config Request.md`](Config%20Request.md) (Status: Discussion)
 
@@ -83,13 +83,15 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
 │   ├── mc_STM32F103xE.hpp       # (MC Hardware plan) real addresses, silicon facts
 │   └── pc_STM32F103xE.hpp       # (MC Hardware plan) static volatile registers
 └── Tests/
-    ├── CaptureStream.hpp
-    ├── test_main.cpp            # assert-based runner (D-3); defines the tests' prt1
-    ├── test_config_common.cpp
-    ├── test_binding_pc.cpp
-    ├── test_color.cpp
-    ├── test_printer.cpp
-    └── test_config_mc_host.cpp
+    ├── pc/                      # PC suite (spec §12): free to use the PC; tests Common code too
+    │   ├── CaptureStream.hpp
+    │   ├── test_main.cpp        # PC suite runner (D-3); defines the tests' prt1
+    │   ├── test_config_common.cpp
+    │   ├── test_binding_pc.cpp
+    │   ├── test_color.cpp
+    │   ├── test_printer.cpp
+    │   └── test_config_mc_host.cpp
+    └── mc/                      # (MC Hardware plan) MC suite, independent of the PC suite
 ```
 
 Every header starts with `#pragma once` and the `__cplusplus` guard (spec §2).
@@ -120,8 +122,8 @@ Each phase ends in a buildable, green state and is one commit, unless BY prefers
 4. Targets:
    - `printer`: static library with `Printer/` + `Hardware/` sources for the platform (`pc_*` or `mc_*`). Its public include dirs are the repository root (for `"Printer/Printer.hpp"` and `"Hardware/..."`), `Config/` and `Config/<platform>/`.
    - `printer_2`: the demo; links `printer`.
-   - `printer_tests`: host test executable, registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`.
-   - `config_mc_check`: compile-only object library for Phase 6; never linked.
+   - `printer_tests`: the **PC suite** (`Tests/pc/`), registered with `ctest`. Built only when `PRINTER_PLATFORM=PC`. The MC suite (`Tests/mc/`) is independent and belongs to the MC Hardware plan (spec §12).
+   - `config_mc_check`: compile-only object library for Phase 6, part of the PC suite; never linked. It checks `config_mc.hpp`, which is a Common-area file (`AGENTS.md` §1).
    - **Library rules (spec §1.1):** common sources (`Config/`, `Printer/` outside `pc_*`) and `mc_*` sources compile with `-nostdinc++`, so a C++ library header is a build error. The MC configuration adds `-fno-exceptions -fno-rtti -fno-threadsafe-statics`. `pc_*` sources compile without `-nostdinc++`. CMake sets this per source file group.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
@@ -145,7 +147,7 @@ Only what the binding and colour rules need.
 4. **`ConsoleStream console0`**: writes to `std::cout`. `allowsAnsi()` returns a flag that `printerPlatformInit()` sets (false until then).
 5. **PC `FileStream file0..file8`**: `open(name, OpenMode = append)`, `close()`, `sendByteRaw`, `flush`; `allowsAnsi()` is always false. A write while closed is dropped (provisional, pending §13.17). There are no markers yet (§13.2), and `name` is a public field (§13.19).
    - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `file0..file8` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. A `std::ofstream` member would also put `<fstream>` into the common `FileStream.hpp`, which the library rules forbid (spec §1.1). So the nine `std::ofstream` objects live in a **function-local** static array inside `pc_FileStream.cpp`, constructed on the first `open()`. A namespace-scope array would be initialized at run time, which brings the initialization-order problem back. `FileStream` holds only its index and an `isOpen` flag, and it doesn't touch the array while closed. That keeps its constructor `constexpr` and its header free of the standard library. The function-local static is allowed here because §1.1 rule 5 applies to common and MC code, not to `pc_*` files. See D-4.
-6. **`Tests/CaptureStream`**: records bytes. `allowsAnsi()` is settable per test (§12).
+6. **`Tests/pc/CaptureStream`**: records bytes. `allowsAnsi()` is settable per test (§12). It belongs to the PC suite; the MC suite will have its own.
 
 **Done when:** the core compiles in the PC build, and `test_color.cpp` passes:
 - C1: `allowsAnsi = true`, colour `darkGray`, "ab" gives `"\x1b[90mab"`; then `resetColor()` gives `"\x1b[0m"`.
@@ -206,7 +208,7 @@ New decisions this plan introduces. Each has a provisional default so work can s
 |---|---|---|
 | D-1 | Where do the config headers live: `Config/` (project-owned, outside the library) or `Printer/Config/` (shipped with the library)? | `Config/`. A host project supplies its own config, and the `printer` target takes the directory from a CMake variable `PRINTER_CONFIG_DIR` (default `${CMAKE_SOURCE_DIR}/Config`) |
 | D-2 | How does common code find the platform header? | Include-path selection of `config_platform.hpp` (kept by BY, 2026‑10‑24) |
-| D-3 | Test style (handoff P-10) | Assert-based runner with no external dependency, registered with `ctest` |
+| D-3 | PC suite framework (handoff P-10) | Assert-based runner with no external dependency, registered with `ctest`. The PC suite may use any framework (spec §12), so Catch2 or GoogleTest is also an option. The MC suite chooses its own in the MC Hardware plan |
 | D-4 | PC `FileStream`'s `ofstream` storage | A function-local static array of nine `std::ofstream` in `pc_FileStream.cpp`, constructed on first `open()`; `FileStream` holds an index and an `isOpen` flag. This keeps constant initialization (spec §4) and keeps `<fstream>` out of the common header (spec §1.1). Revised 2026‑10‑24: the earlier "aligned storage + placement-new" would have needed `<new>` |
 | D-5 | The bytes `endLine` emits, and their order | `'\n'` first, then `resetColor()`. Resetting first would leave the stream idle, so the newline would re-emit the colour (§5). The line ending is `"\n"` on both platforms for now; whether MC serial terminals need `"\r\n"` is for the Printer core plan |
 
@@ -229,7 +231,7 @@ The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot
 
 ## 7. Risks and checks
 
-- **Library rules (spec §1.1).** `-nostdinc++` on common sources catches a C++ library header, but it doesn't catch a call to `malloc` or `new` through a C header. On the PC those link silently; on the MC, the link without `_sbrk` catches them. Until the MC build exists, code review is the check: no `new`, `malloc` or `std::` outside `pc_*` files. `Tests/` is PC-only code and may use the standard library. The one exception is `test_config_common.cpp`, which compiles with `-nostdinc++` to prove that `config.hpp` is clean.
+- **Library rules (spec §1.1).** `-nostdinc++` on common sources catches a C++ library header, but it doesn't catch a call to `malloc` or `new` through a C header. On the PC those link silently; on the MC, the link without `_sbrk` catches them. Until the MC build exists, code review is the check: no `new`, `malloc` or `std::` outside `pc_*` files. `Tests/pc/` is PC code and may use the standard library. The one exception is `test_config_common.cpp`, which compiles with `-nostdinc++` to prove that `config.hpp` is clean.
 - **Trivial destructors** (spec §1.1 rule 4). `BaseStream` has no virtual destructor (Phase 4), and the same goes for `Stream`, `NullStream`, `FileStream` and `Printer`. Each class gets `static_assert(__has_trivial_destructor(T))`, using the compiler built-in because `<type_traits>` is not allowed in common code. Checked with g++ 15.2.0 under `-nostdinc++` on 2026‑10‑24: `__has_trivial_destructor` works, and `__is_trivially_destructible` does not exist in that compiler.
 
 - **Constant initialization of the streams** (§4). This depends on every stream type having a `constexpr` constructor and on `nullSink` being constant-initialized. GCC has no `-Wglobal-constructors` and C++17 has no `constinit`, so the check is test B1 plus a code-review rule: no stream type may have a member with a non-`constexpr` constructor (D-4).
@@ -252,4 +254,5 @@ The spec's 2026‑10‑24 decisions §13.5 (keywords), §13.28 (constructor boot
    - `UsartStream<N>`, polled first, then DMA. It is tested on the PC against the static registers first; a timed model with simulated interrupts follows when a driver path waits on a flag.
    - The bank-size edge-case tests promised in spec §13.34 (`bankSize` 1–4, head / body / tail states). They decide whether `printerMinBankSize` can drop from 4 to 1.
    - The first ARM build (`mc` preset).
+   - The MC test suite (`Tests/mc/`), with its own framework and its own way of building and running, independent of the PC suite (spec §12).
 3. **File markers plan,** once §13.2, §13.16 and §13.17 are decided.
