@@ -94,7 +94,7 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
     │   ├── TestResults.hpp      # the one result type shared by all PC suites
     │   ├── CaptureStream.hpp
     │   ├── test_config.cpp      # ConfigTests: the Phase 1 checks
-    │   ├── test_config_tu2.cpp  # second translation unit for the single-address check
+    │   ├── test_config_address_probe.cpp  # reports &cfg::defaultFileName from a second source file
     │   ├── test_color.cpp       # ColorTests: C1-C6
     │   ├── test_binding.cpp     # BindingTests: B1-B4
     │   ├── test_printer.cpp     # PrinterTests: P1-P3
@@ -121,7 +121,7 @@ Each phase ends in a buildable, green state. BY commits all changes personally (
 2. Declare the constants `inline constexpr` (C++17), as the spec sketches now do. Plain `constexpr` at namespace scope gives each translation unit its own copy; `inline` gives `defaultFileName` one address everywhere.
 3. Add a `constexpr bool isValid(const UartSettings&)` helper: `bankSize` is 0 or within `printerMinBankSize`…`printerMaxBankSize`, `dataBits` is 8 or 9, and `baudrate > 0`. There is no even-size check (spec §13.32, §13.33). Platform headers `static_assert` it for every settings constant, so a bad value fails where it is written, not later inside `UsartStream<N>`. The §7 asserts in `UsartStream<N>` stay as the second line of defence. The header includes only `<cstdint>` (spec §1.1).
 
-**Done when:** `Tests/pc/test_config_common.cpp` includes `config.hpp` **alone** (no platform header) and compiles by hand with `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror`. It `static_assert`s `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`. `config.hpp`'s only system include is `<cstdint>` (manual check). `CMakeLists.txt` does not change in Phase 1 (the repository root is already on the include path); the include check and the test target come with Phase 2. The detailed plan is `Phase 1 plan.md`.
+**Done when:** `Tests/pc/test_config.cpp` includes `config.hpp` **alone** (no platform header) and compiles by hand with `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -c`, together with the address probe `Tests/pc/test_config_address_probe.cpp`. Its `static_assert`s cover `isValid(uartDefault)`, `darkGray.sgr == 90` and `darkGreen.sgr == 32`, `printerMaxBankSize <= 65535`, and that `isValid` accepts `bankSize` 0 and 4 but rejects 1, 3 and `printerMaxBankSize + 1`. `config.hpp`'s only system include is `<cstdint>` (manual check). `CMakeLists.txt` does not change in Phase 1 (the repository root is already on the include path); the include check and the test target come with Phase 2. The detailed plan is `Phase 1 plan.md`.
 
 ### Phase 2 — Platform selection and CMake
 1. `PRINTER_PLATFORM` cache variable, `PC` (default) or `MC`. Configuring with any other value is an error.
@@ -153,9 +153,9 @@ Each phase ends in a buildable, green state. BY commits all changes personally (
      ```
 
      It checks each file's own `#include <...>` lines, not what an allowed header includes in turn, and not project includes (`#include "..."`).
-   - **PC suite skeleton (§4a):** `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp` and the runner `Tests/pc/pc_Tests.cpp`. The Phase 1 checks, compiled by hand until now, become the first suite, `ConfigTests` (`Tests/pc/test_config.cpp`):
-     - its `static_assert`s move over unchanged;
-     - the single-address check becomes a runtime `check()`. It compares `&cfg::defaultFileName` taken in `test_config.cpp` with the same address returned by `Tests/pc/test_config_tu2.cpp`, a one-function second translation unit (the old `test_config_common_main.cpp` without its `main()`);
+   - **PC suite skeleton (§4a):** `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp` and the runner `Tests/pc/pc_Tests.cpp`. The two Phase 1 files, compiled by hand until now under their final names, become the first suite, `ConfigTests`:
+     - `Tests/pc/test_config.cpp` keeps its `static_assert`s unchanged and gains `runConfigTests()`;
+     - the single-address check becomes a run-time `check()`: `&cfg::defaultFileName` as seen in `test_config.cpp` must equal the address reported by the address probe, `Tests/pc/test_config_address_probe.cpp` (`defaultFileNameAddressFromProbe()`);
      - `main.cpp` gains `Tests::runAll()`, as in §1.
 5. The `mc` preset stops with a clear message if no ARM toolchain is found. The MC library build belongs to the MC Hardware plan.
 
