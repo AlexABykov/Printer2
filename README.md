@@ -25,7 +25,7 @@ int main() {
 }
 ```
 
-- **One global printer, `prt2`, and targets as keywords:** `message` (like `std::cout`), `error` (like `std::cerr`), and the file sinks `file0` … `file8`. A target stays selected until the next switch.
+- **One global printer, `prt2`, and targets as keywords:** `message` (like `std::cout`), `error` (like `std::cerr`), and the file sinks `file0` … `file8`. A target stays selected until the next switch. Every keyword has its own type, so any object of that type is an alias: after `constexpr File6 recorder{};`, `prt2 << recorder << …` works exactly like `prt2 << file6 << …`.
 - **Errors are ordinary output:** `prt2 << error << "mask = " << mask << " out of range" << endLine;`, or `prt2.error("mask = %d out of range\n", mask);`. Both print the same line; the second one adds no newline by itself, so the format string ends with `'\n'`.
 - **A temporary switch with `hold`:** `prt2 << hold << error << … << endLine;` prints one line to `error`, and the following output goes back to the previous target.
 - **Flushing is simple:** `<< endLine` ends the line and flushes; `<< flush` or `prt2.flush(stream)` flushes one hardware stream; `prt2.flush()` flushes all. A `'\n'` is just a character. `error` flushes itself, like `std::cerr`.

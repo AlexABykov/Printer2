@@ -176,6 +176,61 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-25 (session 4) — **Keywords are types: any object of a keyword's type is that keyword. Base file keywords `file0` … `file8`, with aliases and no `file(i)`. The streams behind the keywords are separate objects. Documentation only; next is Phase 0 / Phase 1.**
+
+**State.** Documentation only. No source file was created or changed and nothing was built. Session 3 is committed by BY as `c5c307c`; the changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md` and `AGENTS.md` are unchanged in this session.
+
+### What changed
+
+- **`Plans/Config/Config Specification.md`:**
+  - **§3:** a new "Keyword types" layer in the object model. The streams are `messageStream`, `errorStream` and `fileStreams[0..8]`. `operator<<` takes a keyword, or a `BaseStream&` for an object the caller owns (tests, project-bound sinks).
+  - **§4:**
+    - The keyword table shows each keyword's type (`Message`, `Error`, `File0` … `File8`) and the stream it selects.
+    - New bullets: "each base keyword has its own type, and the type is the keyword", and "base keywords and aliases", with `inline constexpr File6 recorder{};` as the example.
+    - `File<N>` has `static_assert(N < 9)`.
+    - The 2026‑10‑23 text "each target is a distinct global object … without a tag type" is replaced.
+  - **§4.1:** `prt2.flush(…)` takes a keyword (one overload per type) or a `BaseStream&`.
+  - **§8:** file names are set by `fileN.setName(…)`, not by a public `name` field, because a keyword is an empty tag and can't hold the name. `file0.name = …` is gone from the examples.
+  - **§9:** the binding targets the internal streams (`messageStream.pInner`, `PcSink::file1` → `&fileStreams[1]`). The keywords need no binding.
+  - **§13:**
+    - new decisions 13.54 and 13.55;
+    - a dated note on 13.19 (the form is now `setName`; enforcement stays open);
+    - the former 13.55 open item (the alias form) points to the Decisions table;
+    - a new open item, 13.56 (names).
+- **`Plans/Config/Config Base Plan.md`:**
+  - A new `Printer/Keywords.hpp` (Phase 4 item 6) holds the tag types, the base keywords, and `File<N>` forwarding `setName` / `open` / `close` to `fileStreams[N]`.
+  - The `Stream` globals are `messageStream` / `errorStream`, and the PC `FileStream`s are the array `fileStreams[9]`, which hold the name pointer.
+  - `Printer` gets one `operator<<` per keyword type, plus `operator<<(BaseStream&)`; every one returns `Printer&`.
+  - B2, B4, the RAII snapshot and the "tests don't touch the globals" list use the stream names. **B5 (keywords and aliases) is new.**
+  - §6 row §13.19: `setName`.
+- **`README.md`:** one sentence on aliases (`constexpr File6 recorder{};`).
+
+**Tests re-baselined (plan only, nothing is built):** B2 and B4 now name `messageStream` / `errorStream` / `fileStreams[1]` instead of `message` / `error` / `file1`, because the keywords are no longer the stream objects (§13.55). What they check is unchanged.
+
+### Decisions
+
+Recorded in spec §13 with BY's wording.
+
+| ID | Decision | Date |
+|---|---|---|
+| 13.54 | Base keywords `file0` … `file8`; on the PC each is a file with its own unique name. No indexed `file(i)` keyword; `prt2.file(index, …)` stays the only indexed access. Projects name the base keywords with aliases | 2026‑10‑25 |
+| 13.55 | Each base keyword has its own type, and any object of that type is that keyword: "`BaseKeyWordTypeFoo bar;` - now bar will work exactly like foo". Keywords are empty tags; `Printer` selects the stream by the type. This is the old project's model (`KeyWords::` structs, one `operator<<` per struct), and it replaces the same-day proposal of reference aliases (`FileStream& recorder = file6;`) | 2026‑10‑25 |
+
+### Open
+
+1. **Spec 13.56, names** (provisional):
+   - **Keyword types:** `Message` / `Error` / `File<N>` (`File0` … `File8`). `Message` and `Error` are common words and may clash with user types. Alternatives are `MessageKeyword` / `ErrorKeyword` / `FileKeyword<N>`, or a namespace like the old `KeyWords::`.
+   - **Streams:** `messageStream` / `errorStream` / `fileStreams[9]`.
+2. **Spec 13.19:** the form is `setName`; whether misuse (renaming an open file) gets a debug assert is still open.
+3. **Still open from session 3:** spec 13.50 (stuck-detection details), 13.51 (flush details), 13.52 (unsupported specifiers) and 13.53 (8 or 9 files).
+4. **Still open from before:** BY's approval of `Config Base Plan.md` and `Phase 1 plan.md`; spec 13.1, 13.2, 13.11, 13.12, 13.14, 13.16, 13.17, 13.20, the rest of 13.22, 13.25, 13.31, 13.34, 13.38 and 13.42.
+
+### Notes for the incoming developer
+
+- **Keywords are types, not streams** (spec §4, §13.55). `message` is an empty `Message` tag; the stream it selects is `messageStream`. Code that reads or binds a stream uses the stream name; code that prints uses the keyword.
+- **The old project is a good reference for the keyword mechanism:** `C:/Work/valve_6/Common/Printer/KeyWords.h` and `PrinterOperators.cpp`. One difference matters: its `operator<<` returns `Printer` **by value**, so after the first `<<` the rest of a chain works on a temporary copy, and a switch made later in the chain doesn't persist. The new `operator<<` returns `Printer&`.
+- **Tests select their local streams with `operator<<(BaseStream&)`.** The keyword overloads always select the global streams, so a test that uses a keyword must snapshot and restore that stream (B5).
+
 ## Mailbox entry — 2026-10-25 (session 3) — **Milestone: the Printer's user API is settled: `prt2`, keywords `message` / `error` / `file0` … `file8`, formatted output on the printer (`prt2.message` / `error` / `file(index, …)`), the flush model, blocking writes with stuck detection, `hold`. Documentation only; next is Phase 0 / Phase 1.**
 
 **State.** Documentation only. No source file was created or changed and nothing was built; the repository still has the root `config.h` and `main.cpp`, and `Printer/` is empty. All changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md` is unchanged.
