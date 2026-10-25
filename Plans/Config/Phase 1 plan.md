@@ -80,7 +80,7 @@ enum class StopBits    : uint8_t { one, two };
 enum class FlowControl : uint8_t { none, rtsCts };
 
 struct UartSettings {
-    uint32_t    baudrate;
+    uint32_t    baudRate;
     uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
     uint8_t     dataBits;     // data bits, parity bit not counted (§13.42, deferred)
     Parity      parity;
@@ -93,14 +93,14 @@ inline constexpr uint32_t printerMaxBankSize = 4096;   // upper bound only, §7;
 
 inline constexpr UartSettings uartDefault{115200, 0, 8, Parity::none, StopBits::one, FlowControl::none};
 
-inline constexpr const char* defaultFileName = "noname.log";   // §8, both platforms
+inline constexpr auto defaultFileName = "noname.log";          // §8, both platforms
 
 // A settings constant is valid when the USART can be programmed from it as written.
 constexpr bool isValid(const UartSettings& s) {
     const bool bankOk = s.bankSize == 0
                      || (s.bankSize >= printerMinBankSize && s.bankSize <= printerMaxBankSize);
     const bool bitsOk = s.dataBits == 8 || (s.dataBits == 9 && s.parity == Parity::none);
-    return s.baudrate > 0 && bankOk && bitsOk;
+    return s.baudRate > 0 && bankOk && bitsOk;
 }
 
 static_assert(printerMinBankSize >= 1 && printerMinBankSize <= printerMaxBankSize);
@@ -118,6 +118,12 @@ Notes on the code:
 - **`<cstdint>`** is the one C++ library header allowed in Common and MC code (`AGENTS.md` §2). It holds only typedefs, costs no RAM and no code, and is also available in a bare-metal ARM toolchain. The types are written unqualified (`uint8_t`), as the "no `std::`" rule asks.
   - Strictly, the standard guarantees only `std::uint8_t` from `<cstdint>`. GCC's `<cstdint>` includes `<stdint.h>`, which declares the global names as well, so the unqualified spelling works with GCC, and it is the common practice in embedded C++.
 - **`#pragma once` only.** The `.hpp` extension already says the header is C++17 and not C-compatible, so no `__cplusplus` guard is added.
+- **Changed after the build, 2026‑10‑26** (implementation review 000; spec §13.61, §13.62). BY made three edits in the implemented file, and the code above now follows them:
+  - the field `baudrate` is renamed `baudRate`;
+  - `defaultFileName` is declared `auto`, which deduces the same `const char* const`;
+  - the namespace body is indented, which is formatting only, with no project rule.
+
+  The §3.2 checks don't name the field, so they are unchanged. They were recompiled with the §3.3 commands and still pass.
 
 ### 3.2 Write the checks (PC suite)
 

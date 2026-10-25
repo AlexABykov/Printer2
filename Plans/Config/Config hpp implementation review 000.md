@@ -89,3 +89,17 @@ So the hand-compiled checks will still compile and pass.
 3. **Consider restoring the explicit `const char*` for `defaultFileName`** (D-2) — optional.
 4. **Carry F-10 forward** as an open item for Phase 3/4. When a platform header starts `static_assert`ing `isValid(usartNSettings)`, decide whether `stopBits` and `flowControl` are also checked by `isValid()` or validated only by the platform’s own `static_assert`s.
 5. Nothing else from `Found Issues.md` is due in Phase 1; the remaining High items (F-01 … F-06) still need to be resolved in the base plan and spec before Phase 4/5 are implemented.
+---
+
+## Resolution (2026‑10‑26)
+
+The review text above is unchanged. This table records where each point now stands.
+
+| Item | Outcome | Where |
+|---|---|---|
+| D-1 `baudRate` | **Kept**, by BY ("Keep baudRate"). Spec §9 (bullet, `isValid` text, sketch), Phase 1 plan §3.1 and base plan Phase 1 item 3 now say `baudRate`. `Config Request.md` is BY's text and is left as written | spec §13.61 |
+| D-2 `auto` | **Kept**, by BY ("Keep auto"). The review's recommendation to restore `const char*` was not taken. Spec §9 and Phase 1 plan §3.1 now show `auto` | spec §13.62 |
+| D-3 indentation | **No rule**, by BY. The file stays as formatted; the sketches stay unindented | spec §9 note |
+| F-10 | **Already resolved before this review**, as spec §13.59 (2026‑10‑26): the enum limit is documented, not checked. Nothing to carry forward | spec §9, §13.59 |
+| Recommendation 5 (F-01 … F-06 still open) | **Out of date.** Session 6 resolved them in the base plan and the spec | `Found Issues.md`, Resolution |
+| "Tests still pass" | **Confirmed by a build**, not only by reading: the §3.3 commands were rerun on BY's edited file and pass | handoff, session 8 |

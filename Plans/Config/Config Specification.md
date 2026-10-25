@@ -257,11 +257,11 @@ The sketches below fix names and types. The values are examples.
 ### `config.hpp` — common
 - Feature flags: `printHexPrefix`, `doubleScientific`, `doublePlusInExponent`, `useColorDefault` (see §5 for its precedence).
 - `Color` is a 16-colour SGR foreground code, with named presets that match the request's names (`darkGray`, `darkGreen`, …). 24-bit RGB is not supported in v1 (§13.13).
-- `UartSettings { baudrate, bankSize, dataBits, parity, stopBits, flowControl }`. `flowControl` comes from the README's "hardware flow control" requirement.
+- `UartSettings { baudRate, bankSize, dataBits, parity, stopBits, flowControl }`. `flowControl` comes from the README's "hardware flow control" requirement.
 - Default `UartSettings` constants used by both platforms.
 - `printerMinBankSize` and `printerMaxBankSize` (bounds, §7), and `defaultFileName` (§8).
 - No references to platform object names (`USART2`, `console0`, …).
-- `isValid(const UartSettings&)`: a `constexpr` check that `bankSize` is 0 or within the bounds, `dataBits` is 8 (any parity) or 9 (no parity), and `baudrate > 0`. It does not check `stopBits`, `parity` or `flowControl`: they are `enum class` values, which can only be out of range through a cast, and a cast is the caller's responsibility (§13.59). Platform headers `static_assert` it for each of their settings constants. The header also `static_assert`s its own bounds and `uartDefault`.
+- `isValid(const UartSettings&)`: a `constexpr` check that `bankSize` is 0 or within the bounds, `dataBits` is 8 (any parity) or 9 (no parity), and `baudRate > 0`. It does not check `stopBits`, `parity` or `flowControl`: they are `enum class` values, which can only be out of range through a cast, and a cast is the caller's responsibility (§13.59). Platform headers `static_assert` it for each of their settings constants. The header also `static_assert`s its own bounds and `uartDefault`.
 - All variables are `inline constexpr` (one object per program, not one per translation unit). The only system header is `<cstdint>` (§1.1).
 
 ```cpp
@@ -292,7 +292,7 @@ enum class StopBits    : uint8_t { one, two };
 enum class FlowControl : uint8_t { none, rtsCts };
 
 struct UartSettings {
-    uint32_t    baudrate;
+    uint32_t    baudRate;
     uint32_t    bankSize;     // one bank; RAM = 2 x bankSize; 0 = polled, no DMA (§7)
     uint8_t     dataBits;     // data bits, parity bit not counted (§13.42, deferred)
     Parity      parity;
@@ -305,14 +305,14 @@ inline constexpr uint32_t printerMaxBankSize = 4096;   // upper bound only, §7;
 
 inline constexpr UartSettings uartDefault{115200, 0, 8, Parity::none, StopBits::one, FlowControl::none};
 
-inline constexpr const char* defaultFileName = "noname.log";   // §8, both platforms
+inline constexpr auto defaultFileName = "noname.log";          // §8, both platforms
 
 // A settings constant is valid when the USART can be programmed from it as written.
 constexpr bool isValid(const UartSettings& s) {
     const bool bankOk = s.bankSize == 0
                      || (s.bankSize >= printerMinBankSize && s.bankSize <= printerMaxBankSize);
     const bool bitsOk = s.dataBits == 8 || (s.dataBits == 9 && s.parity == Parity::none);
-    return s.baudrate > 0 && bankOk && bitsOk;
+    return s.baudRate > 0 && bankOk && bitsOk;
 }
 
 static_assert(printerMinBankSize >= 1 && printerMinBankSize <= printerMaxBankSize);
@@ -321,6 +321,8 @@ static_assert(isValid(uartDefault));
 
 } // namespace cfg
 ```
+
+*Revised 2026‑10‑26 (implementation review 000):* the sketch follows the implemented `Printer/Config/config.hpp`. The field is `baudRate`, not `baudrate`, because "baud rate" is two words (§2, §13.61). `defaultFileName` is declared `auto`, which deduces the same type, `const char* const` (§13.62). The implemented file indents the namespace body; that is formatting only, and the project has no rule for it.
 
 ### `config_mc.hpp` — STM32F103 (example)
 - **Choices only, no silicon facts.** Register addresses, DMA channel mapping, pin tables and clock limits are facts about the chip, and they live in the chip headers in `Hardware/` (§10). `config_mc.hpp` therefore includes no vendor header and compiles on any host.
@@ -532,6 +534,8 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.58 | **`autoFlush()` is a virtual query on `BaseStream`** (§3, §4.1). Default `false`; `Stream` overrides it to return its flag. `Printer` asks `pStream->autoFlush()`, so a stream selected through any path, including `operator<<(BaseStream&)`, keeps its auto-flush. From review finding F-02 (`Found Issues.md`). | "1. F-02: a virtual autoFlush() on BaseStream" – "yes", 2026‑10‑26 |
 | 13.59 | **`isValid()` checks no enum ranges** (§9). `stopBits`, `parity` and `flowControl` are `enum class` values, which can be out of range only through a cast; that is the caller's responsibility, and the limit is documented instead of checked. From review finding F-10. | "F-10: document the limit" – "yes", 2026‑10‑26 |
 | 13.60 | **Where errors go by default: the PC console in red, USART3 on the MC** (§9). The PC example's `errorTarget` changes from `PcSink::file1` to `PcSink::console0` (with the existing `errorColor = brightRed`); the MC example already uses `McSink::usart3`. Before this, the PC example sent errors to `file1`, which nothing opens, so they were silently dropped. The demo prints errors with `prt2 << hold << error << … << endLine` (§4.1). From review finding F-04. | "On PC to console, use red color. On MC to USART3"; for the demo: "use prt2 << hold <<error << ... << endLine", 2026‑10‑26 |
+| 13.61 | **`UartSettings::baudRate`**, not `baudrate` (§9): "baud rate" is two words, so it is camelCase like `dataBits` and `stopBits` (§2). BY made the change in `config.hpp`; the spec and the plans follow it. The request's `settings.baudrate` is quoted owner text and stays. From implementation review 000, D-1. | "Keep baudRate", 2026‑10‑26 |
+| 13.62 | **`defaultFileName` is `inline constexpr auto`** (§9). It deduces `const char* const`, the same type as the explicit `const char*` form, so the address probe and the tests are unchanged. The review recommended the explicit type; BY kept `auto`. From implementation review 000, D-2. | "Keep auto", 2026‑10‑26 |
 
 ### Open items
 

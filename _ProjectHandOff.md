@@ -176,6 +176,49 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 8) — **Implementation review 000 of `config.hpp` resolved. BY's edits (`baudRate`, `auto`, indentation) stay, and the spec and plans now follow the code. The build is still green.**
+
+**State.** Documentation only; no source file changed in this session. BY's own edits to `Printer/Config/config.hpp` were rebuilt and pass. BY committed session 7 and the review (`b9061d6`, `bf12d3a`), but **`.gitignore` and `Tests/pc/` are still untracked**, so those commits don't include them. The changes below are in the working tree, uncommitted (BY commits).
+
+### What changed
+
+- **`Plans/Config/Config Specification.md`:**
+  - **§9:** `baudRate` in the `UartSettings` bullet, the `isValid` text and the sketch; `defaultFileName` is `auto` in the sketch; a dated revision note under the sketch.
+  - **§13:** new decisions 13.61 and 13.62.
+- **`Plans/Config/Phase 1 plan.md`:** `baudRate` and `auto` in the §3.1 code, plus a dated note "Changed after the build".
+- **`Plans/Config/Config Base Plan.md`:** `baudRate` in Phase 1 item 3.
+- **`Plans/Config/Config hpp implementation review 000.md`:** a "Resolution (2026‑10‑26)" section at the end. The review text is unchanged.
+
+### Built
+
+The same toolchain and commands as session 7 (MinGW g++ 15.2.0, CMake 4.3.1), on BY's edited `config.hpp`:
+- `cmake --build build` built `printer_2`, and `build/printer_2.exe` exited 0.
+- Both `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I. -c` check compiles exited 0 with no warnings.
+- `grep '#include <'` found `<cstdint>` only.
+
+No test changed. The checks use positional initialisation, so the rename doesn't reach them.
+
+### Decisions
+
+Recorded in spec §13 with BY's wording.
+
+| ID | Decision | Date |
+|---|---|---|
+| 13.61 | `UartSettings::baudRate` (camelCase, two words), not `baudrate`: "Keep baudRate" | 2026‑10‑26 |
+| 13.62 | `defaultFileName` stays `inline constexpr auto`: "Keep auto" | 2026‑10‑26 |
+
+Also BY's choice, not a §13 decision: **no style rule for namespace indentation** (review D-3).
+
+### Open
+
+1. **Untracked files:** `.gitignore` and `Tests/pc/` (both test files) are BY's to add.
+2. **Still open from session 7:** `Config Base Plan.md` approval before Phase 2.
+3. **Still open from earlier sessions:** as listed in session 6.
+
+### Notes for the incoming developer
+
+- **The review is partly out of date.** It lists F-10 and F-01 … F-06 as open, but they were resolved in session 6 (§13.59, and `Found Issues.md`'s Resolution table). Read its Resolution section first.
+
 ## Mailbox entry — 2026-10-26 (session 7) — **First code: the rest of Phase 0 and all of Phase 1 are done. `Printer/Config/config.hpp` exists, and its compile-time checks pass. The demo builds and exits 0. Next is Phase 2.**
 
 **State.** Built and green, uncommitted (BY commits). Nothing is staged except the rename that `git mv` stages itself (`config.h` → `Printer/Config/config.hpp`). `CMakeLists.txt`, `README.md`, `AGENTS.md` and the spec are unchanged.
