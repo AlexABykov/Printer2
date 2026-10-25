@@ -176,6 +176,55 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 5) — **A third output role, `debug`, and a `none` target that switches any role off. Documentation only; next is Phase 0 / Phase 1.**
+
+**State.** Documentation only. No source file was created or changed and nothing was built. Session 4 is committed by BY (`36fd760`, `94a1ce2`). The changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md`, `AGENTS.md` and `Plans/Config/Phase 1 plan.md` are unchanged: `config.hpp` holds no role constants, so Phase 1 is not affected.
+
+### What changed
+
+- **`Plans/Config/Config Specification.md`:**
+  - **§2, §3:** `debug`, `Debug` and `debugStream` are added to the names, the instances and the keyword types.
+  - **§4:**
+    - a `debug` row in the keyword table;
+    - a new bullet, "`debug`, the third output role": why it isn't `info` again, the `none` target, and the known limit;
+    - a dated note superseding "a project that needs a separate debug channel adds a keyword back";
+    - `Debug` in the overload list, and `debug` in the safe-names and base-keyword lists.
+  - **§4.1, §6:** `prt2.debug(…)` in the flush table and the method example; `::debug` among the hidden names; `cfg::debugAutoFlush`.
+  - **§9:**
+    - `McSink` and `PcSink` gain `none`;
+    - `debugTarget` is `usart3` on the MC and `console0` on the PC;
+    - `debugColor = darkGray` (PC) and `debugAutoFlush = false` (both platforms);
+    - `printerInit()` binds `debugStream` and maps `none` to `&nullSink`.
+  - **§13:** new decision 13.57; a dated note on 13.44 ("extended"); `Debug` and `debugStream` added to open item 13.56.
+- **`Plans/Config/Config Base Plan.md`:**
+  - `debug` / `Debug` / `debugStream` in the layout and in Phases 3–6.
+  - `none` in both enums, and `printerInit()` binds three streams.
+  - B2 and the RAII snapshot cover `debugStream`.
+  - **B6 (`none` → `&nullSink`) is new.** For it, the PC sink resolver becomes a plain function in a new PC-only header, `Hardware/pc_PrinterInit.hpp`.
+- **`README.md`:** the status date, `debug` in the keyword list, and `prt2.debug(…)` in the formatted-output bullet.
+
+**Tests re-baselined (plan only, nothing is built):** B2 also checks `debugStream`'s binding, colour and `autoFlush`, and the snapshot also saves `debugStream`, because there is a third global stream. B6 is new.
+
+### Decisions
+
+Recorded in spec §13 with BY's wording.
+
+| ID | Decision | Date |
+|---|---|---|
+| 13.57 | A third output role, `debug`, with `prt2.debug(…)`. Defaults: USART3 on the MC (the debug / calibration link), `console0` in `darkGray` on the PC, no `autoFlush`. `McSink` / `PcSink` gain `none`, which binds a role to `nullSink`, so any role can be switched off from the configuration. "I have decided that a one more stream "debug" can be useful"; "Yes for all 3 questions" | 2026‑10‑26 |
+
+### Open
+
+1. **Known limit of `none`** (spec §4, recorded, not a question yet): a silenced call still evaluates and formats its arguments. Removing the calls entirely would need a macro at the call site. Revisit if the cost shows up on the MC.
+2. **Spec 13.56, names:** now also `Debug` / `debugStream`. `Debug` is another common word that may clash with user types.
+3. **Still open from sessions 3 and 4:** spec 13.19 (misuse assert), 13.50, 13.51, 13.52 and 13.53.
+4. **Still open from before:** BY's approval of `Config Base Plan.md` and `Phase 1 plan.md`; spec 13.1, 13.2, 13.11, 13.12, 13.14, 13.16, 13.17, 13.20, the rest of 13.22, 13.25, 13.31, 13.34, 13.38 and 13.42.
+
+### Notes for the incoming developer
+
+- **`debug` is not the dropped `info`.** `info` was removed (13.44) because it went to the same sink as `message`. `debug` earns its place by going to a different link by default, and by being able to go nowhere (`none`).
+- **On the MC, `error`, `debug` and the file backing all share USART3** in the example configuration. Interleaving between them is the same question as two open files on one USART (spec 13.16).
+
 ## Mailbox entry — 2026-10-25 (session 4) — **Keywords are types: any object of a keyword's type is that keyword. Base file keywords `file0` … `file8`, with aliases and no `file(i)`. The streams behind the keywords are separate objects. Documentation only; next is Phase 0 / Phase 1.**
 
 **State.** Documentation only. No source file was created or changed and nothing was built. Session 3 is committed by BY as `c5c307c`; the changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md` and `AGENTS.md` are unchanged in this session.

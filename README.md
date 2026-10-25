@@ -6,7 +6,7 @@ Printer2 is a **technical demo**. The same code prints from a bare-metal STM32 m
 
 ## Status
 
-**Design done, implementation not started** (2026‑10‑25). The specification and the first implementation plans are written, and the Printer's user API (keywords, formatted output, flushing) is settled; no Printer code exists yet. The next step is Phase 1: the common configuration header, `Printer/Config/config.hpp`.
+**Design done, implementation not started** (2026‑10‑26). The specification and the first implementation plans are written, and the Printer's user API (keywords, formatted output, flushing) is settled; no Printer code exists yet. The next step is Phase 1: the common configuration header, `Printer/Config/config.hpp`.
 
 Live status and the session history are kept in [`_ProjectHandOff.md`](_ProjectHandOff.md).
 
@@ -25,7 +25,7 @@ int main() {
 }
 ```
 
-- **One global printer, `prt2`, and targets as keywords:** `message` (like `std::cout`), `error` (like `std::cerr`), and the file sinks `file0` … `file8`. A target stays selected until the next switch. Every keyword has its own type, so any object of that type is an alias: after `constexpr File6 recorder{};`, `prt2 << recorder << …` works exactly like `prt2 << file6 << …`.
+- **One global printer, `prt2`, and targets as keywords:** `message` (like `std::cout`), `error` (like `std::cerr`), `debug` (diagnostics, on a link of its own, and easy to switch off), and the file sinks `file0` … `file8`. A target stays selected until the next switch. Every keyword has its own type, so any object of that type is an alias: after `constexpr File6 recorder{};`, `prt2 << recorder << …` works exactly like `prt2 << file6 << …`.
 - **Errors are ordinary output:** `prt2 << error << "mask = " << mask << " out of range" << endLine;`, or `prt2.error("mask = %d out of range\n", mask);`. Both print the same line; the second one adds no newline by itself, so the format string ends with `'\n'`.
 - **A temporary switch with `hold`:** `prt2 << hold << error << … << endLine;` prints one line to `error`, and the following output goes back to the previous target.
 - **Flushing is simple:** `<< endLine` ends the line and flushes; `<< flush` or `prt2.flush(stream)` flushes one hardware stream; `prt2.flush()` flushes all. A `'\n'` is just a character. `error` flushes itself, like `std::cerr`.
@@ -33,7 +33,7 @@ int main() {
 ## Planned features
 
 - **Type-safe stream API** with `operator<<`, for `int8`…`int64`, `uint8`…`uint64`, `float`, `double`, `char` and strings, in decimal and hexadecimal.
-- **Formatted output** with a subset of the printf specifiers (`%d %i %u %x %X %f %s %c %p %%`): `prt2.message(…)`, `prt2.error(…)` and `prt2.file(index, …)`. They are not called `printf`, because not all of printf is supported.
+- **Formatted output** with a subset of the printf specifiers (`%d %i %u %x %X %f %s %c %p %%`): `prt2.message(…)`, `prt2.error(…)`, `prt2.debug(…)` and `prt2.file(index, …)`. They are not called `printf`, because not all of printf is supported.
 - **Blocking output, with no loss:** when a buffer is full, printing waits. A stream whose hardware is stuck drops its bytes instead of hanging the program.
 - **Two USARTs on the MC** (USART2 and USART3 on an STM32F103), with optional RTS/CTS hardware flow control.
 - **Optional double-buffered DMA** per USART. `bankSize == 0` means polled transmission with no extra RAM; `bankSize > 0` means two banks of that size (RAM = 2 × `bankSize`, minimum 4), one filling while the other drains.

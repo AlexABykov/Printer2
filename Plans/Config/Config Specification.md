@@ -1,6 +1,6 @@
 # Printer Configuration Specification (Draft)
 **Status:** Draft. Companion to [`Config Request.md`](Config%20Request.md) in this folder.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review; 2026‑10‑24: Hardware, chip files, MC boot; CPU boot out of scope; keywords, .hpp, bare metal, constructor boot, clock check; config in Printer/Config, link-time platform selection; 2026‑10‑25: Printer API milestone — `prt2`, keywords `message` / `error` / `file0` … `file8`, formatted-output methods, flush model, blocking writes with stuck detection, `hold` confirmed, keyword types and aliases)
+**Date:** 2026‑10‑23 (revised 2026‑10‑23 after review; 2026‑10‑24: Hardware, chip files, MC boot; CPU boot out of scope; keywords, .hpp, bare metal, constructor boot, clock check; config in Printer/Config, link-time platform selection; 2026‑10‑25: Printer API milestone — `prt2`, keywords `message` / `error` / `file0` … `file8`, formatted-output methods, flush model, blocking writes with stuck detection, `hold` confirmed, keyword types and aliases; 2026‑10‑26: `debug` role and `none` target)
 
 > The examples in `Config Request.md` are illustrative and predate the decisions below. Where they differ, **this specification is authoritative**.
 >
@@ -38,7 +38,7 @@ The MC has no operating system, very little RAM, and only a poor heap allocator 
 ## 2. Naming conventions
 
 - **Types/classes:** `PascalCase` — `BaseStream`, `Stream`, `FileStream`, `UsartStream`, `ConsoleStream`, `NullStream`, `Printer`, `Color`, `UartSettings`.
-- **Instances, members, functions, `constexpr` values:** `camelCase` — `prt2`, `message`, `error`, `file0` … `file8`, `endLine`, `flush`, `hold`, `autoFlush`, `pStream`, `pInner`, `hasColor`, `printerInit`, `printerPlatformInit`, `printHexPrefix`, `platformHasColor`.
+- **Instances, members, functions, `constexpr` values:** `camelCase` — `prt2`, `message`, `error`, `debug`, `file0` … `file8`, `endLine`, `flush`, `hold`, `autoFlush`, `pStream`, `pInner`, `hasColor`, `printerInit`, `printerPlatformInit`, `printHexPrefix`, `platformHasColor`.
 - **Unit-suffix exception:** a `constexpr` holding a physical quantity may end in `_Unit` — `cpuFrequency_MHz`, `apb1Frequency_Hz`, `apb2Frequency_Hz`. The suffix keeps the unit visible at every use site (§13.14).
 - **Configuration constants** live inside `namespace cfg`. The namespace is `cfg`, not `Config`.
 - **Preprocessor macros** (only when a macro is genuinely required): `SCREAMING_SNAKE_CASE` — e.g. `PLATFORM_HAS_COLOR` if a `#if` switch is needed. Preferred form is `constexpr bool` so `#if` is avoided; if a macro is used, it is UPPERCASE.
@@ -60,19 +60,19 @@ BaseStream  (abstract sink)
 Instances:
   MC transports:     mcUsart2, mcUsart3
   PC transports:     console0
-  Common streams:    messageStream, errorStream (Stream)
+  Common streams:    messageStream, errorStream, debugStream (Stream)
                      fileStreams[0..8] (FileStream)
 
 Keyword types (empty tags, §4):
-  Message, Error, File<N> (File0..File8)
+  Message, Error, Debug, File<N> (File0..File8)
   Base keywords:     message, error, file0..file8
 ```
 
-- `Printer::pStream` is `BaseStream*`. `operator<<` takes a **keyword** (`message`, `error`, `fileN`, or any object of their types, §4) and points `pStream` at the stream that the keyword's type names. It also takes a `BaseStream&` directly, which selects that very object: tests use this with their own local `Stream`s, and a project can use it for a sink it owns and binds itself.
+- `Printer::pStream` is `BaseStream*`. `operator<<` takes a **keyword** (`message`, `error`, `debug`, `fileN`, or any object of their types, §4) and points `pStream` at the stream that the keyword's type names. It also takes a `BaseStream&` directly, which selects that very object: tests use this with their own local `Stream`s, and a project can use it for a sink it owns and binds itself.
 - `Stream` owns the colour logic. It wraps a `BaseStream* pInner`. `Stream::sendByteRaw(b)` emits an ANSI colour sequence on transition, then forwards `b` to `pInner`. When colour is disabled (§5, precedence) the bytes go straight through. `Stream` also holds an `autoFlush` flag, set at binding from the config (§4.1, §13.49); `Stream::flush()` forwards to `pInner`.
 - `FileStream` is a `BaseStream` in its own right. It never carries colour. On MC it forwards text to a `UsartStream` and emits begin/end markers; on PC it writes to its own `std::ofstream`. A `Stream` may also use a file stream as its `pInner` (e.g. `errorStream` → `fileStreams[1]` on PC, §9); colour is then skipped because `FileStream::allowsAnsi()` is `false`.
 - `BaseStream` exposes `sendByteRaw`, `flush`, `allowsAnsi()`, and `resetColor()`. `sendByteRaw` and `flush` are **pure virtual**; only `allowsAnsi()` (default `false`) and `resetColor()` (default no-op) have defaults. `flush()` blocks until the bytes have left (§4.1).
-- **Formatted output is a method on the printer, not on the stream** (§6, §13.45): `prt2.message(fmt, …)`, `prt2.error(fmt, …)` and `prt2.file(index, fmt, …)`. Every write goes through `prt2`, so colour, `endLine` and `hold` stay consistent. *Revised 2026‑10‑25:* the earlier `stream.printf(fmt, ...)` (§13.4) is removed, and the "`prt1.error` is removed" note of the earlier draft is superseded.
+- **Formatted output is a method on the printer, not on the stream** (§6, §13.45): `prt2.message(fmt, …)`, `prt2.error(fmt, …)`, `prt2.debug(fmt, …)` and `prt2.file(index, fmt, …)`. Every write goes through `prt2`, so colour, `endLine` and `hold` stay consistent. *Revised 2026‑10‑25:* the earlier `stream.printf(fmt, ...)` (§13.4) is removed, and the "`prt1.error` is removed" note of the earlier draft is superseded.
 
 ## 4. Target keywords
 
@@ -80,20 +80,24 @@ Keyword types (empty tags, §4):
 |---|---|---|---|
 | `message` | `Message` | `messageStream` (`Stream`) | Normal output, like `std::cout` (was `streamMessage`; also takes over the former `info` general log, §13.44) |
 | `error` | `Error` | `errorStream` (`Stream`) | Errors, like `std::cerr`: a role, bindable to any sink; flushes itself by default (`autoFlush`, §4.1) |
+| `debug` | `Debug` | `debugStream` (`Stream`) | Diagnostics, on a link of their own (MC default: USART3, the debug / calibration link); can be switched off by binding it to `none` (§13.57) |
 | `file0` … `file8` | `File0` … `File8` (`File<0>` … `File<8>`) | `fileStreams[0]` … `[8]` (`FileStream`) | Nine named file sinks (extensible later) |
 
 Type and stream names other than the base keywords are provisional (§13.56).
 
-- **Two output roles** (§13.44). `info` and `message` were redundant: both example configurations sent them to the same sink, and only the colour differed. `message` is the `std::cout` of the Printer and `error` its `std::cerr`. `error` is a role, not a link to the PC's stderr: it is bound to whatever sink the configuration names (§9). A project that needs a separate debug channel adds a keyword back, or uses a `fileN`.
-- **Keyword names are short and must not clash with the C library** (§13.5). Keywords are global names, so `log` is ruled out (it hides `::log()` from `<math.h>`), and so is `err` (BSD `err()`). `message`, `error`, `endLine`, `flush` and `hold` are safe. A project can add its own alias for any base keyword (below).
+- **Two output roles** (§13.44). `info` and `message` were redundant: both example configurations sent them to the same sink, and only the colour differed. `message` is the `std::cout` of the Printer and `error` its `std::cerr`. `error` is a role, not a link to the PC's stderr: it is bound to whatever sink the configuration names (§9). *Revised 2026‑10‑26:* the earlier sentence "a project that needs a separate debug channel adds a keyword back, or uses a `fileN`" is superseded by the base keyword `debug` (below).
+- **`debug`, the third output role** (§13.57). Unlike the dropped `info`, `debug` is not a copy of `message`: by default it goes to a different link (MC: USART3, which the original README calls the debug / calibration link), and it can be bound to **`none`**, which drops its output. An alias cannot provide this, because an alias is the same stream (§13.55); a separate channel has to be a base keyword.
+  - **`none` is a target value for every role** (`McSink::none`, `PcSink::none`). `printerInit()` binds such a role to `nullSink`, so a project can silence `debug`, or any other role, from the configuration without touching a call site.
+  - **Known limit:** a silenced role still costs the call. The arguments are evaluated and formatted before `nullSink` drops the bytes. Removing the calls entirely would need a compile-time switch at the call site, that is a macro, because common code can't see platform configuration (§5). Accepted for now.
+- **Keyword names are short and must not clash with the C library** (§13.5). Keywords are global names, so `log` is ruled out (it hides `::log()` from `<math.h>`), and so is `err` (BSD `err()`). `message`, `error`, `debug`, `endLine`, `flush` and `hold` are safe (`debug` is lower case, so it does not meet the `DEBUG` / `NDEBUG` macros). A project can add its own alias for any base keyword (below).
 - All are globals with static storage duration, defined in common code: the keywords as `inline constexpr` empty objects, and the streams behind them. Platform translation units bind the streams' inner sinks via `printerInit()`.
 - **Use before boot is safe for the streams.** Every `Stream::pInner` (and the MC `FileStream` backing pointer) defaults to a common `NullStream nullSink`, which drops bytes. The constructors are `constexpr`, so the default is set during constant initialization and holds even for prints from other static constructors or early boot. Output written before `printerInit()` is lost, not a crash.
 - **`prt2` itself is dynamically initialized,** because its constructor boots the hardware (§9) and therefore can't be `constexpr`. Its static storage is zero-filled first, so `pStream` reads as `nullptr` until the constructor has run, and `operator<<` treats a `nullptr` `pStream` like `nullSink`. This is a practical guard only: formally, using `prt2` from another global's constructor before its own has run is undefined behaviour, so the rule stays "don't print through `prt2` from static constructors".
 - `prt2 << message` sets `pStream = &messageStream` and leaves it there until the next switch. Same for `error` and `fileN`. `hold` makes one switch temporary (§4.1).
-- **Each base keyword has its own type, and the type is the keyword** (§13.55). A keyword is an empty tag; `Printer` chooses the stream by the keyword's type, through one overload per type (`operator<<(Message)`, `operator<<(Error)`, and a template `operator<<(File<N>)`). Overload resolution also tells keywords apart from `const char*` and integers.
+- **Each base keyword has its own type, and the type is the keyword** (§13.55). A keyword is an empty tag; `Printer` chooses the stream by the keyword's type, through one overload per type (`operator<<(Message)`, `operator<<(Error)`, `operator<<(Debug)`, and a template `operator<<(File<N>)`). Overload resolution also tells keywords apart from `const char*` and integers.
   - `File<N>` has `static_assert(N < 9)`, so `File<9>` is a compile error, not a run-time check.
   - Keyword objects are empty, `constexpr` and trivially destructible, so they cost no RAM and are safe before boot (§1.1).
-- **Base keywords and aliases** (§13.54, §13.55). The base keywords are `message`, `error` and `file0` … `file8`; there is no indexed `file(i)` keyword. Each `fileN` is its own sink: on the PC, a file with its own unique name (§8). **An alias is any object of a base keyword's type:**
+- **Base keywords and aliases** (§13.54, §13.55). The base keywords are `message`, `error`, `debug` and `file0` … `file8`; there is no indexed `file(i)` keyword. Each `fileN` is its own sink: on the PC, a file with its own unique name (§8). **An alias is any object of a base keyword's type:**
 
   ```cpp
   inline constexpr File6   recorder{};   // prt2 << recorder << "blah" works exactly like prt2 << file6 << "blah"
@@ -113,7 +117,7 @@ Type and stream names other than the base keywords are provisional (§13.56).
 | `<< endLine` | `'\n'`, then `resetColor()`, then flush (§5, §13.40). Also releases `hold` |
 | `prt2.flush(stream)` | Flushes the hardware behind that one stream. Blocks |
 | `prt2.flush()` | Flushes every hardware sink. Blocks |
-| `prt2.message(…)` / `prt2.error(…)` / `prt2.file(i, …)` | Format and write (§6). No flush, except on an `autoFlush` stream |
+| `prt2.message(…)` / `prt2.error(…)` / `prt2.debug(…)` / `prt2.file(i, …)` | Format and write (§6). No flush, except on an `autoFlush` stream |
 
 - **In the basic case the user doesn't care about flushing** (§13.46). Printing is blocking: when a buffer is full, the write waits until enough of it is free (§7). A flush is needed only where output must have left before the program goes on, and then it is one simple call.
 - **A flush is per hardware stream.** On the MC a flush blocks until the USART has sent everything, which may take a long time, so the user must be able to flush one link alone. `prt2.flush(error)` forwards through `errorStream.pInner` to the sink behind it (`mcUsart3` in the §9 example). Keywords that share a sink share its flush. `prt2.flush(file0)` flushes the backing USART on the MC, and the `std::ofstream` on the PC. `prt2.flush` takes a keyword (one overload per keyword type, like `operator<<`), or a `BaseStream&`, so platform code may also pass a transport (`mcUsart2`, `console0`).
@@ -121,7 +125,7 @@ Type and stream names other than the base keywords are provisional (§13.56).
 - **What a flush is, per platform** (§13.22):
   - **MC:** every stream is a hardware link, `fileN` included (a `fileN` is a USART stream between markers, §8). A flush starts the partly filled bank (as `updateUsartX()` does) and waits until both banks have drained and the last byte has left (`TC`), under stuck detection (§7). On a polled USART it waits for `TC` only.
   - **PC:** `console0` → `std::cout.flush()`; `fileN` → `ofstream::flush()`; `nullSink` → no-op.
-- **`autoFlush`, like `std::cerr`** (§13.49). A `Stream` flag, set at binding from `cfg::messageAutoFlush` / `cfg::errorAutoFlush` (§9). `error` has it set by default. Every write to an `autoFlush` stream through `prt2` ends with a flush: each `<<` item while it is the target, and each `prt2.error(…)` call (granularity provisional, §13.51). On the MC that is a blocking wait per item, which is acceptable because errors are rare.
+- **`autoFlush`, like `std::cerr`** (§13.49). A `Stream` flag, set at binding from `cfg::messageAutoFlush` / `cfg::errorAutoFlush` / `cfg::debugAutoFlush` (§9). `error` has it set by default. Every write to an `autoFlush` stream through `prt2` ends with a flush: each `<<` item while it is the target, and each `prt2.error(…)` call (granularity provisional, §13.51). On the MC that is a blocking wait per item, which is acceptable because errors are rare.
 - **A flush never changes colour state** (§5, §13.9). The next byte does not re-emit the colour.
 - **`flush` replaces `flushDma`** (§13.46). The name no longer refers to DMA, because the flush now applies to every sink.
 
@@ -177,6 +181,7 @@ prt2 << " done" << endLine;   // back on message
 ```cpp
 prt2.message("frame %u received\n", n);
 prt2.error("mask = %d out of range\n", mask);
+prt2.debug("state %u, pos %d\n", state, pos);
 prt2.file(0, "%u,%d,%d\n", t, pos, vel);
 ```
 
@@ -189,7 +194,7 @@ prt2.file(0, "%u,%d,%d\n", t, pos, vel);
 - A free-function format engine (`printFormatted(BaseStream&, const char*, va_list)`, with `va_list` from the compiler's `<stdarg.h>`, §1.1) does the work; the three methods forward to it.
 - **No formatted output on a stream directly.** `stream.printf(...)` is removed (§13.4, superseded), so no write can bypass `prt2`, and its interaction with `endLine`, colour and `hold` is defined (§13.15).
 - A project alias (§4) has no method of its own; it is written to with `<<`.
-- Inside `Printer`'s member functions, the method names `message`, `error` and `flush` hide the global keywords, so the implementation writes `::message`, `::error`, `::flush`. User code is unaffected.
+- Inside `Printer`'s member functions, the method names `message`, `error`, `debug` and `flush` hide the global keywords, so the implementation writes `::message`, `::error`, `::debug`, `::flush`. User code is unaffected.
 
 ## 7. Buffering (MC)
 
@@ -322,8 +327,8 @@ static_assert(isValid(uartDefault));
 - **Clocks — the clock in effect, not a clock the Printer sets (§10, §13.23).** The Printer does not boot the CPU. `hseFrequency_Hz` records the board crystal for an optional CPU boot. The PLL and divider values are part of that CPU boot, so they are commented out here. `sysclkFrequency_Hz` is the clock running when the Printer boots (in `prt2`'s constructor): without a CPU boot, an F103 runs on HSI = 8 MHz with all dividers at 1. The rest of the Printer uses frequencies **derived** from it: `cpuFrequency_MHz` for the stuck-detection budget **only** (§7; called the DMA backpressure budget before 2026‑10‑25), and `apb1Frequency_Hz` (USART2, USART3) / `apb2Frequency_Hz` (USART1) for BRR. Once a CPU boot runs the F103 at 72 MHz, APB1 runs at 36 MHz, so computing BRR from the CPU clock would double every baud rate. The chip header `static_assert`s these values against the silicon limits. Keeping them in step with a CPU boot is §13.27.
 - GPIO remap choice per USART (`usart2Remap`, `usart3Remap`). The pins each remap selects come from the chip header.
 - `usart2Settings` / `usart3Settings`. Per the request, USART3's `bankSize` is **zero by default**, so it is polled with no DMA. USART2's example `bankSize` of 2048 costs 2 × 2048 = 4 KB of RAM (64 KB on the F103VET6).
-- Role → physical `UsartStream` mapping (`messageTarget`, `errorTarget`, `fileBackingUsart`), expressed as an enum that `printerInit()` resolves, so this header does not need the `UsartStream` declarations (§13.20).
-- `autoFlush` per role (`messageAutoFlush`, `errorAutoFlush`), copied into each `Stream` by `printerInit()` (§4.1, §13.49).
+- Role → physical `UsartStream` mapping (`messageTarget`, `errorTarget`, `debugTarget`, `fileBackingUsart`), expressed as an enum that `printerInit()` resolves, so this header does not need the `UsartStream` declarations (§13.20).
+- `autoFlush` per role (`messageAutoFlush`, `errorAutoFlush`, `debugAutoFlush`), copied into each `Stream` by `printerInit()` (§4.1, §13.49).
 
 ```cpp
 #pragma once
@@ -356,20 +361,22 @@ inline constexpr UartSettings usart2Settings{115200, 2048, 8, Parity::none, Stop
 inline constexpr UartSettings usart3Settings{230400, 0,    8, Parity::none, StopBits::one, FlowControl::none};
                                              // usart2: 2 x 2048 = 4 KB RAM; usart3: bankSize 0 by default, polled
 
-enum class McSink : uint8_t { usart2, usart3 };     // proposal, §13.20
+enum class McSink : uint8_t { none, usart2, usart3 };   // proposal, §13.20; none: nullSink (§13.57)
 inline constexpr McSink messageTarget    = McSink::usart2;
 inline constexpr McSink errorTarget      = McSink::usart3;
+inline constexpr McSink debugTarget      = McSink::usart3;   // the debug / calibration link
 inline constexpr McSink fileBackingUsart = McSink::usart3;
 
 inline constexpr bool messageAutoFlush = false;
 inline constexpr bool errorAutoFlush   = true;     // like std::cerr (§4.1, §13.49)
+inline constexpr bool debugAutoFlush   = false;
 
 } // namespace cfg
 ```
 
 ### `config_pc.hpp` — PC
 - `constexpr bool platformHasColor = true`. Colour still needs VT mode at runtime (see the PC boot below).
-- Role → endpoint mapping. A role can target `console0` or a `fileN`; the request's example sends `error` to `file1`.
+- Role → endpoint mapping. A role can target `console0`, a `fileN`, or `none` (§13.57); the request's example sends `error` to `file1`.
 - Per-`Stream` `Color` values, using the presets from `config.hpp`.
 - `autoFlush` per role, as on the MC (§4.1, §13.49).
 - The emulated chip is chosen in `Hardware/pc_chip.hpp`, not here (§10, §13.24).
@@ -382,15 +389,18 @@ namespace cfg {
 
 inline constexpr bool platformHasColor = true;
 
-enum class PcSink : uint8_t { console0, file0, file1, file2, file3, file4, file5, file6, file7, file8 };
+enum class PcSink : uint8_t { none, console0, file0, file1, file2, file3, file4, file5, file6, file7, file8 };   // none: nullSink (§13.57)
 inline constexpr PcSink messageTarget = PcSink::console0;
 inline constexpr PcSink errorTarget   = PcSink::file1;   // colour skipped: FileStream
+inline constexpr PcSink debugTarget   = PcSink::console0;
 
 inline constexpr Color messageColor = darkGreen;
 inline constexpr Color errorColor   = brightRed;
+inline constexpr Color debugColor   = darkGray;
 
 inline constexpr bool messageAutoFlush = false;
 inline constexpr bool errorAutoFlush   = true;           // like std::cerr (§4.1, §13.49)
+inline constexpr bool debugAutoFlush   = false;
 
 } // namespace cfg
 ```
@@ -417,7 +427,7 @@ int main() {
 1. **`printerPlatformInit()` — hardware boot.** It runs first, so no byte reaches an interface that is not yet running. The MC sequence is in §10. On the MC it starts with the clock check (§10, §13.27).
    - **PC:** enables ANSI processing on the console: `GetConsoleMode` on `STD_OUTPUT_HANDLE`, then `SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)`. Windows 10 shows raw escape bytes without this. If either call fails (old Windows, output redirected to a file or pipe), `console0.allowsAnsi()` returns `false`, and colour is skipped by §5 precedence rule 3. A mock of the MC boot may be added on PC if needed.
 2. **`printerInit()` — binding.**
-   - Bind `messageStream.pInner` and `errorStream.pInner` by resolving the role→target enums to objects (`McSink::usart2` → `&mcUsart2`, `PcSink::file1` → `&fileStreams[1]`, …), and set each stream's `autoFlush` from `cfg::messageAutoFlush` / `cfg::errorAutoFlush`. On PC, also set each stream's colour from the `cfg::*Color` constants.
+   - Bind `messageStream.pInner`, `errorStream.pInner` and `debugStream.pInner` by resolving the role→target enums to objects (`McSink::usart2` → `&mcUsart2`, `PcSink::file1` → `&fileStreams[1]`, …), and set each stream's `autoFlush` from `cfg::*AutoFlush`. A role whose target is `none` is bound to `&nullSink`, so its output is dropped (§13.57). On PC, also set each stream's colour from the `cfg::*Color` constants.
    - **MC:** point each `fileStreams[N]`'s backing `UsartStream` at the object named by `cfg::fileBackingUsart`. **PC:** nothing to bind. Each `fileStreams[N]` is already a `FileStream` and opens its own `std::ofstream` on `open()`.
    - The keywords need no binding: they are empty tags, and their types name the streams (§4).
 
@@ -509,7 +519,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.18 | **`hold` makes the next target switch temporary** (§4.1). It saves the current target in one slot; the next `endLine` does its own work on the held stream and then switches back. Use: an error appears in the middle of other output, goes to its own stream, and the default stream comes back without a temporary variable. | "\"<< hold\" is a new cool feature, an easy to use \"stream guard\". What can it be use for? In the middle, an error appeared. We want to print an error to a special stream, then restore the default stream. Idea: \"hold\" will meke next stream selection temporary. Otherwise, we have to write: static tempStream = currStream, after printing error - currStream=tempStream", 2026‑10‑25 |
 | 13.22 (part) | **Flush per platform** (§4.1). On the MC every stream, `fileN` included, is a hardware link, and a flush drains its USART. On the PC, `console0` flushes `std::cout`, and `file0` … `file8` wrap the `std::` file methods, so they flush their `ofstream`. The other parts of §13.22 stay open. | "on MC file is a stream similar to all others. On PC file stream is a complex wrapper around std:: file methods"; "on MC stream is a hardware link, on pc it is a text in 1 console (colored to separate emulated hardware streams) and a file - with bank of 8 \"files\" and \"null\"", 2026‑10‑25 |
 | 13.43 | **The printer instance is `prt2`.** The new Printer is not fully compatible with the old one's `prt1`, and the name says so. User code is `Printer prt2 = {};` (§9). | "old one was prt1, let's name this one prt2 - they are not fully compatible", 2026‑10‑25 |
-| 13.44 | **Two output keywords: `message` (like `std::cout`) and `error` (like `std::cerr`)**, plus `file0` … `file8` (§4). `info` is dropped as redundant with `message`. `error` is a role, bindable to any sink, not the PC's stderr. Revises §13.5. | "error / message / file(index, …) - I think having \"info\" and \"message\" is redundant. message for std::cout and error for std::cerr", 2026‑10‑24; "just \"error\" keyword and method name", 2026‑10‑25 |
+| 13.44 | **Two output keywords: `message` (like `std::cout`) and `error` (like `std::cerr`)**, plus `file0` … `file8` (§4). `info` is dropped as redundant with `message`. `error` is a role, bindable to any sink, not the PC's stderr. Revises §13.5. *Extended 2026‑10‑26 (§13.57):* a third role, `debug`, is added. It is not the dropped `info` again: it has its own default link and can be switched off. | "error / message / file(index, …) - I think having \"info\" and \"message\" is redundant. message for std::cout and error for std::cerr", 2026‑10‑24; "just \"error\" keyword and method name", 2026‑10‑25 |
 | 13.45 | **Formatted output: `prt2.message(fmt, …)`, `prt2.error(fmt, …)`, `prt2.file(index, fmt, …)`** (§6). No `printf` in the name, because only a subset is supported. No automatic newline: the caller writes `'\n'`. After the call, `prt2`'s target is what it was before. An out-of-range file index prints a line to `error`. Supersedes §13.4. | "what if we will use \"prt1.error(...\" and \"prt1.file(<file index>...\"? 7 methods less and without \"printf\" word - I'm not going to support all standard printf features. \"printf\" name is not honest"; "no automatical endlines - let user add '\n' if needed", 2026‑10‑24; target restored: "yes"; bad index: "line to error by default", 2026‑10‑25 |
 | 13.46 | **Flush model** (§4.1). `<< flush` and `prt2.flush(stream)` flush the one hardware stream behind the target; `<< endLine` is `'\n'`, `resetColor()`, flush; `prt2.flush()` flushes every stream. A flush blocks. `'\n'` is a plain byte and causes no flush. In the basic case the user doesn't care about flushing, because printing is blocking. The formatted-output methods don't flush, except on an `autoFlush` stream (§13.49). Supersedes §13.9, revises §13.40, and settles handoff P-3. | "`<< flush`, `<< endLine`, `prt.flush(<stream>)` - flushes 1 hardware stream - because on MC flush is blocking and may take a lot of time - ability to flush 1 hardware stream is needed. `prt.flush()` without arguments flushes all streams. '\n' is just a symbol, use it if you want to end the string, doesn't cause flush manually. In basic case, user doesn't care about flush - printing is blocking, if buffer is full - long call waiting for enough to fit free buffer memory will happen. As for `prt.msg(...)` and other \"similar to printf\" calls - I was told that manual flush must be a simple call. `prt.flush()`, `prt.flush(<stream>)` - OK" (after a discussion with an experienced engineer); the model summary: "I absolutely agree with your understanding", 2026‑10‑25 |
 | 13.47 | **Blocking writes with no loss, and stuck detection** (§7). A write into a full buffer waits; no byte is lost while the hardware works. A stream whose hardware makes no progress is stuck, and its byte is dropped. Every later write checks the stream once: if it has recovered, the write proceeds; if not, the byte is dropped and forgotten, and the call returns at once. Supersedes the "backpressure by loss" rule of §7. Details: §13.50. | "new rule \"block with no loss\" is correct"; "If we will print to problematic hardware, the whole program can hang. To avoid that original Printer had a defencive mechanism - dropped after stuck"; "on every write we can check stuck stream - and release it. If we are printing byte and can't release stream - drop byte, forget forever, exit as fast as you can", 2026‑10‑25 |
@@ -517,6 +527,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 | 13.49 | **`error` flushes itself, like `std::cerr`** (§4.1). Each `Stream` has an `autoFlush` flag, set from a per-role config constant (`cfg::messageAutoFlush = false`, `cfg::errorAutoFlush = true`, §9). Granularity: §13.51. | "It's good to flush error messages like std::cerr does"; config constant: "I agree", 2026‑10‑25 |
 | 13.54 | **Base keywords `file0` … `file8`, no indexed `file(i)` keyword** (§4). Each `fileN` is its own sink; on the PC, a file with a unique name. Projects give the base keywords their own names with aliases. `prt2.file(index, …)` (§13.45) stays the only indexed access. | "let's have base keywords file0..8. Example: `prt2 << file6 << "blah" ...` - file6 on PC is a file with a unique name. The framework let's one to easily create any aliases for the base keywords - just create value with any name and one of given types", 2026‑10‑25 |
 | 13.55 | **Each base keyword has its own type; any object of that type is that keyword** (§3, §4). Keywords are empty tags (`Message`, `Error`, `File<N>`, provisional names §13.56), and `Printer` selects the stream by the type, with one `operator<<` overload per keyword type. The streams are separate objects (`messageStream`, `errorStream`, `fileStreams[N]`). `File6 recorder;` makes `prt2 << recorder` work exactly like `prt2 << file6`, and `recorder.open(…)` opens the same file. File names move from a public field to `setName` (§8). This restores the old project's model, in which every keyword was an empty `KeyWords::…` struct with its own overload (`valve_6/Common/Printer/KeyWords.h`). It reverses the 2026‑10‑23 §4 text "each target is a distinct global object … without a tag type". Example: when the Recorder needs a file, it creates its own alias of a file keyword type, `File6 recorder;`; which file it picks doesn't matter. | "In keywords, add `BaseKeyWordTypeFoo bar;` - now bar will work exactly like foo, for example, `prt2 << bar << "blah" << ...` will work exactly like `prt2 << foo << "blah" << ...`"; "How did old project work? when processing a keyword, called operator with a unique type argument"; go-ahead: "yes"; on the Recorder: "When recorder will be needed, it can create an alias "recorder has the same type as file6. Or file2. Doesn't matter"", 2026‑10‑25 |
+| 13.57 | **A third output role, `debug`, and a `none` target** (§4, §9). Keyword `debug` (type `Debug`, stream `debugStream`, provisional names §13.56) and method `prt2.debug(fmt, …)`. Default targets: USART3 on the MC (the debug / calibration link), `console0` in `darkGray` on the PC; `debugAutoFlush = false`. `McSink` and `PcSink` gain `none`, which binds a role to `nullSink`, so any role can be switched off from the configuration. Known limit: a silenced call still evaluates and formats its arguments (§4). Extends §13.44. | "I have decided that a one more stream "debug" can be useful. Your thoughts?"; on the defaults, `none` and `prt2.debug(…)`: "Yes for all 3 questions", 2026‑10‑26 |
 
 ### Open items
 
@@ -566,7 +577,7 @@ Item numbers are stable: a decided item keeps its number, so references such as 
 - **13.53** **Number of files: 8 or 9?** The spec has nine file sinks, `file0` … `file8`, and `prt2.file(index, …)` accepts 0–8. BY's 2026‑10‑25 description of the PC side mentions "a bank of 8 "files" and "null"". Is that an approximate count, or should there be eight (`file0` … `file7`)? Until confirmed, the spec keeps nine.
 - **13.55** *Decided 2026‑10‑25; see the Decisions table.* The open question was the alias form. The provisional reading (a reference, `FileStream& recorder = file6;`) was replaced by BY's rule: keywords have their own types, and any object of a keyword's type is that keyword.
 - **13.56** **Names of the keyword types and the streams behind them** (§4, §13.55). Provisional:
-  - **Keyword types:** `Message`, `Error`, `File<N>`, with `File0` … `File8` as `using` aliases. They follow the PascalCase rule (§2), but `Message` and `Error` are common words, and a user project may already have such types. Alternatives: `MessageKeyword` / `ErrorKeyword` / `FileKeyword<N>`, or a namespace, as in the old `KeyWords::` struct.
-  - **Streams:** `messageStream`, `errorStream`, and the array `fileStreams[9]`. They are internal: user code reaches them only through keywords.
+  - **Keyword types:** `Message`, `Error`, `Debug` (added 2026‑10‑26, §13.57), `File<N>`, with `File0` … `File8` as `using` aliases. They follow the PascalCase rule (§2), but `Message`, `Error` and `Debug` are common words, and a user project may already have such types. Alternatives: `MessageKeyword` / `ErrorKeyword` / `FileKeyword<N>`, or a namespace, as in the old `KeyWords::` struct.
+  - **Streams:** `messageStream`, `errorStream`, `debugStream`, and the array `fileStreams[9]`. They are internal: user code reaches them only through keywords.
 
   Confirm or rename.
