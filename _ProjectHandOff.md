@@ -176,6 +176,51 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 7) — **First code: the rest of Phase 0 and all of Phase 1 are done. `Printer/Config/config.hpp` exists, and its compile-time checks pass. The demo builds and exits 0. Next is Phase 2.**
+
+**State.** Built and green, uncommitted (BY commits). Nothing is staged except the rename that `git mv` stages itself (`config.h` → `Printer/Config/config.hpp`). `CMakeLists.txt`, `README.md`, `AGENTS.md` and the spec are unchanged.
+
+### What changed
+
+- **`config.h` → `Printer/Config/config.hpp`** (`git mv`). The header now holds the Phase 1 plan's §3.1 content, unchanged from the plan.
+- **`main.cpp`:** `#include "config.h"` → `#include "Printer/Config/config.hpp"`.
+- **`.gitignore`, new:** `.idea/`, `cmake-build-*/`, `build/`, `*.exe`. The untracked root `main.exe` no longer shows up.
+- **`Tests/pc/test_config.cpp`, new:** the plan's §3.2 compile-time checks.
+- **`Tests/pc/test_config_address_probe.cpp`, new:** the address probe. It is only compiled for now; the comparison runs in Phase 2's `ConfigTests`.
+- **`Plans/Config/Phase 1 plan.md`:** the done criteria are ticked, and a dated "Implemented" note is added to the build-status block.
+
+### Built
+
+Toolchain: CLion's bundled MinGW `g++.exe (GCC) 15.2.0` and CMake 4.3.1, put on the PATH for the shell (Git Bash). Commands from the repository root, as in plan §3.3:
+
+| Command | Result |
+|---|---|
+| `cmake -S . -B build -G "MinGW Makefiles"` | configured |
+| `cmake --build build` | `Built target printer_2` |
+| `build/printer_2.exe` | exit 0 |
+| `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I. -c Tests/pc/test_config.cpp -o build/test_config.o` | exit 0, no warnings: every `static_assert` holds |
+| `g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I. -c Tests/pc/test_config_address_probe.cpp -o build/test_config_address_probe.o` | exit 0, no warnings |
+| `grep -n '#include <' Printer/Config/config.hpp` | `5:#include <cstdint>` only |
+
+> **Correction (2026‑10‑26), session 2 entry (2026‑10‑24) and Part 1 §2.** Those say the root `config.h` still held the `main()` stub. By this session it was already empty, and `main()` already lived in `main.cpp` (review F-12). So Phase 0 step 1 had nothing left to do. The old text is left as written.
+
+### Decisions
+
+None new.
+
+### Open
+
+1. **Plan approval.** The Phase 1 plan's header says "approved by BY", which session 6's open item 1 still listed as pending. `Config Base Plan.md` still awaits approval before Phase 2.
+2. **Commit split (plan Q-2), BY's choice.** Suggested messages:
+   - "Phase 0: move config header to Printer/Config/config.hpp, add .gitignore" for the rename, `main.cpp` and `.gitignore`;
+   - "Phase 1: common config header Printer/Config/config.hpp with compile-time checks" for the header content, `Tests/pc/` and the plan and handoff updates.
+3. **Still open from earlier sessions:** as listed in session 6.
+
+### Notes for the incoming developer
+
+- **The two test files have no CMake target until Phase 2.** After any edit to `config.hpp`, rerun the two `g++` commands above by hand (plan §6).
+- **`build/` is the hand-build directory** and is ignored. CLion still uses `cmake-build-debug/`.
+
 ## Mailbox entry — 2026-10-26 (session 6) — **The AI review in `Plans/Config/Found Issues.md` is resolved: 14 findings fixed in the plan or the spec, 1 documented as a limit, 1 needed no change, 1 rejected. PC errors now go to the console in red. Documentation only; the base plan is ready for BY's approval again.**
 
 **State.** Documentation only. No source file was created or changed and nothing was built. Session 5 and the review file are committed by BY (`e65d732`, `56df4d0`). The changes below are in the working tree, uncommitted (BY commits). `README.md` and `AGENTS.md` are unchanged.
@@ -407,6 +452,9 @@ Revised by these decisions: 13.4 (superseded), 13.5, 13.8, 13.9 (superseded), 13
 - **Part 1 of this file is out of date** on names and flushing: `cons1`, P-1 and P-3. The spec's §13 is authoritative.
 
 ## Mailbox entry — 2026-10-24 (session 2) — **Config Specification reviewed and revised; `Config Base Plan.md` written and awaiting BY's approval. Still no code. Next is plan approval, then Phase 0.**
+
+> **Correction (2026-10-26).** The root `config.h` was already empty at this point, and `main()` was
+> already in `main.cpp` (review F-12). See the session 7 entry. The text below is left as written.
 
 **State.** Documentation only. No source file was created or changed and nothing was built. `Printer/` is still empty, and the root `config.h` still holds the `main()` stub. The documents are committed by BY up to `ee8bc0e`; only this entry is not yet committed. `Plans/Config/Config Request.md` is unchanged (Status: Discussion; only BY can change it). Toolchain note: in the shell used this session, `g++` and `cmake` are not on the PATH, and no `arm-none-eabi` toolchain was found. Builds are expected through CLion's bundled MinGW 15.2.
 

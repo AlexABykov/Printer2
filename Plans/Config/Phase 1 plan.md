@@ -11,6 +11,8 @@
 >
 > Results: `printer_2.exe` exited 0; `test_config.cpp` and `test_config_address_probe.cpp` compiled, so every `static_assert` holds; `config.hpp` includes only `<cstdint>`.
 >
+> **Implemented (2026‑10‑26).** The rest of Phase 0 and all of Phase 1 are now in the repository's working tree, uncommitted (BY commits). The same commands were run in the repository itself, with the same results. Details are in the 2026‑10‑26 (session 7) handoff entry.
+>
 > The toolchain is not on the shell PATH. It lives at `C:/Users/BY/AppData/Local/Programs/CLion/bin/mingw/bin` (compiler) and `…/CLion/bin/cmake/win/x64/bin` (CMake), as the existing `cmake-build-debug/CMakeCache.txt` also shows.
 
 ## 1. Goal and done criteria
@@ -24,12 +26,12 @@ Write the common configuration header exactly once, so the later phases only inc
 The build system does not change in this phase. The include allow-list check and the test target arrive with Phase 2, which rebuilds `CMakeLists.txt` anyway.
 
 **Done when:**
-- [ ] `Printer/Config/config.hpp` exists with the content in §3.1.
-- [ ] `CMakeLists.txt` is unchanged (§4).
-- [ ] The demo `printer_2` builds through CMake and exits 0.
-- [ ] `Tests/pc/test_config.cpp` and `Tests/pc/test_config_address_probe.cpp` compile by hand with the §3.3 commands, so every `static_assert` holds. (The run-time "one `defaultFileName` object" check comes with Phase 2's `ConfigTests`.)
-- [ ] `config.hpp`'s only `#include <...>` is `<cstdint>` (manual check, §3.3).
-- [ ] Results (compiler, commands, exit codes) are recorded in a new `_ProjectHandOff.md` mailbox entry (house rule 5).
+- [x] `Printer/Config/config.hpp` exists with the content in §3.1.
+- [x] `CMakeLists.txt` is unchanged (§4).
+- [x] The demo `printer_2` builds through CMake and exits 0.
+- [x] `Tests/pc/test_config.cpp` and `Tests/pc/test_config_address_probe.cpp` compile by hand with the §3.3 commands, so every `static_assert` holds. (The run-time "one `defaultFileName` object" check comes with Phase 2's `ConfigTests`.)
+- [x] `config.hpp`'s only `#include <...>` is `<cstdint>` (manual check, §3.3).
+- [x] Results (compiler, commands, exit codes) are recorded in a new `_ProjectHandOff.md` mailbox entry (house rule 5).
 
 ## 2. Prerequisite: the rest of Phase 0
 
