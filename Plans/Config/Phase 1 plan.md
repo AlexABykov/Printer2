@@ -1,5 +1,5 @@
 # Phase 1 Plan — `Printer/Config/config.hpp` (common configuration)
-**Status:** Draft, awaiting BY's approval.  
+**Status:** approved by BY(User).  
 **Date:** 2026‑10‑24 (revised 2026‑10‑24: `<cstdint>`, `#pragma once` only; include check and test target moved to Phase 2; config moved to `Printer/Config/`, so no CMake change at all; Phase 2 turns the checks into the ConfigTests suite run from main; final test file names, address probe)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 1 (and the remainder of Phase 0, §2 below)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §2, §5, §7, §8, §9 (`config.hpp`), §13.13, §13.29, §13.32, §13.33, §13.35  
@@ -112,6 +112,7 @@ Notes on the code:
 - **`inline constexpr`** on every variable gives one object per program instead of one per translation unit. The second test file checks this for `defaultFileName` (§3.2).
 - **`constexpr` functions are implicitly `inline`,** so `isValid` can live in the header.
 - **The header's own `static_assert`s** guard the bounds themselves. Platform headers (Phase 3 and Phase 6) will add `static_assert(cfg::isValid(usartNSettings))` for each of their settings constants.
+- **What `isValid` does not check** (spec §13.59, review F-10, 2026‑10‑26): `stopBits`, `parity` and `flowControl` are `enum class` values, so they can only be out of range through a cast, which is the caller's responsibility. The limit is documented, not checked, so the header in §3.1 stays as it was built.
 - **`<cstdint>`** is the one C++ library header allowed in Common and MC code (`AGENTS.md` §2). It holds only typedefs, costs no RAM and no code, and is also available in a bare-metal ARM toolchain. The types are written unqualified (`uint8_t`), as the "no `std::`" rule asks.
   - Strictly, the standard guarantees only `std::uint8_t` from `<cstdint>`. GCC's `<cstdint>` includes `<stdint.h>`, which declares the global names as well, so the unqualified spelling works with GCC, and it is the common practice in embedded C++.
 - **`#pragma once` only.** The `.hpp` extension already says the header is C++17 and not C-compatible, so no `__cplusplus` guard is added.

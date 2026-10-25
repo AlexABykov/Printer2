@@ -1,10 +1,10 @@
 # Config Base Plan — first implementation slice
 **Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
-**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4; no C++ library in common/MC code; separate PC and MC test suites; config in Printer/Config, link-time platform selection; 2026‑10‑25: Printer API milestone — `prt2`, keywords `message` / `error`, keyword types, `autoFlush`, `endLine` flushes; 2026‑10‑26: `debug` role, `none` target)  
+**Date:** 2026‑10‑23 (revised 2026‑10‑24: Hardware layout, chip files; CPU boot out of scope; keywords, `.hpp`, bare metal, constructor boot, `bankSize`, minimum 4; no C++ library in common/MC code; separate PC and MC test suites; config in Printer/Config, link-time platform selection; 2026‑10‑25: Printer API milestone — `prt2`, keywords `message` / `error`, keyword types, `autoFlush`, `endLine` flushes; 2026‑10‑26: `debug` role, `none` target; review fixes from `Found Issues.md`)  
 **Implements:** [`Config Specification.md`](Config%20Specification.md) §9 (configuration), plus the minimum of §§3–5, §10 and §11 needed to prove it end to end.  
 **Request:** [`Config Request.md`](Config%20Request.md) (Status: Discussion)
 
-> **Build status (2026‑10‑24).** Nothing in this plan is built. `Printer/` is empty, and the root `config.h` still holds the `main()` stub. In the shell used for this plan, `g++` and `cmake` are **not on the PATH**. The handoff names CLion's bundled MinGW 15.2 as the host toolchain, so builds in this plan run through CLion or with that toolchain's `bin/` added to the PATH. No `arm-none-eabi` toolchain was found, so the MC header in this plan is compile-checked on the host only (Phase 6).
+> **Build status (2026‑10‑24).** Nothing in this plan is built. `Printer/` is empty. *Corrected 2026‑10‑26 (review F-12):* the root `config.h` is already empty and `main()` already lives in `main.cpp`; the earlier text said `config.h` still held the `main()` stub. In the shell used for this plan, `g++` and `cmake` are **not on the PATH**. The handoff names CLion's bundled MinGW 15.2 as the host toolchain, so builds in this plan run through CLion or with that toolchain's `bin/` added to the PATH. No `arm-none-eabi` toolchain was found, so the MC header in this plan is compile-checked on the host only (Phase 6).
 
 ## 1. Goal
 
@@ -98,8 +98,8 @@ Printer2/                        # on the include path: "Printer/Printer.hpp", "
     │   ├── test_config.cpp      # ConfigTests: the Phase 1 checks
     │   ├── test_config_address_probe.cpp  # reports &cfg::defaultFileName from a second source file
     │   ├── test_color.cpp       # ColorTests: C1-C6
-    │   ├── test_binding.cpp     # BindingTests: B1-B6
-    │   ├── test_printer.cpp     # PrinterTests: P1-P3
+    │   ├── test_binding.cpp     # BindingTests: B1-B7
+    │   ├── test_printer.cpp     # PrinterTests: P1-P6
     │   └── test_config_mc_host.cpp   # compile-only check of config_mc.hpp; not linked
     └── mc/                      # (MC Hardware plan) brand-new MC suite, incl. mc_Tests.cpp
 ```
@@ -111,7 +111,7 @@ Every header starts with `#pragma once` (spec §2, §13.29).
 Each phase ends in a buildable, green state. BY commits all changes personally (`AGENTS.md` §5); a phase is a natural commit boundary, but the split is BY's choice.
 
 ### Phase 0 — Repository preparation
-1. Move `main()` from the root `config.h` into `main.cpp` (resolves handoff P-12 in favour of "keep the config header as compile-time config").
+1. *Already done (checked 2026‑10‑26, review F-12):* move `main()` from the root `config.h` into `main.cpp` (resolves handoff P-12 in favour of "keep the config header as compile-time config").
 2. `git mv config.h Printer/Config/config.hpp` (now holding only `#pragma once`), and change `main.cpp` to `#include "Printer/Config/config.hpp"`. The repository root is already on `printer_2`'s include path, so `CMakeLists.txt` does not change.
 3. Add `.gitignore` for `.idea/`, `cmake-build-*/`, `build/`, `*.exe`. (`main.exe` is currently untracked in the root.)
 4. Build with MinGW 15.2: `cmake -S . -B build && cmake --build build`.
@@ -165,26 +165,32 @@ Each phase ends in a buildable, green state. BY commits all changes personally (
 
 ### Phase 3 — `Printer/Config/config_pc.hpp`
 1. As in spec §9: `platformHasColor = true`, the `PcSink` enum (with `none`), `messageTarget` / `errorTarget` / `debugTarget`, `messageColor` / `errorColor` / `debugColor`, and `messageAutoFlush` / `errorAutoFlush` / `debugAutoFlush` (spec §13.44, §13.49, §13.57). Function declarations live in `Hardware/PrinterInit.hpp`, not here, so the config stays data-only.
-2. `static_assert` that each role target is a valid `PcSink` value (guards against a future enum edit).
+2. ~~`static_assert` that each role target is a valid `PcSink` value.~~ *Removed 2026‑10‑26 (review F-17):* an `enum class` value can't be invalid without a cast, so the check would prove nothing.
 
 **Done when:** `pc_*` files that need it include it directly, no common file includes it, and Phase 1's test still passes.
 
 ### Phase 4 — Minimal stream core
 Only what the binding and colour rules need.
 
-1. **`BaseStream`** (§3): pure virtual `sendByteRaw(uint8_t)` and `flush()`; `allowsAnsi()` returns `false` by default; `resetColor()` is a no-op by default. There is no `printf` on a stream at all; formatted output is a `Printer` method (spec §6), and it is not added in this slice. No virtual destructor (globals are never deleted through a base pointer), so the destructor stays trivial.
+1. **`BaseStream`** (§3): pure virtual `sendByteRaw(uint8_t)` and `flush()`; `allowsAnsi()` returns `false` by default; `resetColor()` is a no-op by default; `autoFlush()` returns `false` by default (spec §3, §13.58, review F-02). `Printer` asks `pStream->autoFlush()`, so it needs no second pointer and no RTTI. There is no `printf` on a stream at all; formatted output is a `Printer` method (spec §6), and it is not added in this slice. No virtual destructor (globals are never deleted through a base pointer), so the destructor stays trivial.
 2. **`NullStream nullSink`**: drops bytes; `constexpr` constructor.
-3. **`Stream`**, with the globals `messageStream`, `errorStream` and `debugStream` (spec §4, §13.55, §13.57; names provisional, §13.56): `BaseStream* pInner` defaults to `&nullSink` through a `constexpr` constructor, so the three globals are constant-initialized (§4). Each holds a `Color color`, an `idle` flag and an `autoFlush` flag (default `false`, spec §4.1). The class is split by platform:
-   - `Stream.hpp` / `Stream.cpp` (common): the class, the globals, `pInner`, `color`, the `idle` and `autoFlush` flags, and `flush()`, which forwards to `pInner` and does not touch colour state (§5, §13.9, §13.46).
+3. **`Stream`**, with the globals `messageStream`, `errorStream` and `debugStream` (spec §4, §13.55, §13.57; names provisional, §13.56): `BaseStream* pInner` defaults to `&nullSink` through a `constexpr` constructor, so the three globals are constant-initialized (§4). Each holds a `Color color`, an `idle` flag and a private auto-flush flag (default `false`, spec §4.1). The class is split by platform:
+   - `Stream.hpp` / `Stream.cpp` (common): the class, the globals, `pInner`, `color`, the `idle` flag, and `flush()`, which forwards to `pInner` and does not touch colour state (§5, §13.9, §13.46).
+   - **Public interface for binding** (review F-11). `printerInit()` is a free function in another file, so it can't reach private members: `void bind(BaseStream* inner)` sets `pInner`, and `constexpr BaseStream* inner() const` reads it, which also lets B1 check it at compile time. `setAutoFlush(bool)` sets the flag, and `autoFlush()` overrides the `BaseStream` query. These are ordinary interfaces, not test hooks.
    - `pc_Stream.cpp` defines `sendByteRaw` and `resetColor` (spec §5, §13.38):
      - `sendByteRaw`: if `cfg::useColorDefault && idle && pInner->allowsAnsi()`, emit `ESC[<sgr>m` and clear `idle`. Then forward the byte.
      - `resetColor()`: if a colour is active, emit `ESC[0m`. Mark the stream idle either way.
    - `mc_Stream.cpp` (MC Hardware plan) defines both as plain forwarding with no colour.
 4. **`ConsoleStream console0`**: writes to `std::cout`; `flush()` calls `std::cout.flush()` (spec §4.1). `allowsAnsi()` returns a flag that `printerPlatformInit()` sets (false until then).
-5. **PC `FileStream fileStreams[9]`**: `setName(name)`, `open(name, OpenMode = append)`, `close()`, `sendByteRaw`, `flush` (`ofstream::flush()`, a no-op while closed); `allowsAnsi()` is always false. A write while closed is dropped (provisional, pending §13.17). There are no markers yet (§13.2). The name is set through `setName`, because the keywords are empty tags (spec §8, §13.55).
+5. **PC `FileStream fileStreams[9]`**: `setName(name)`, `open(name, OpenMode = append)`, `close()`, `sendByteRaw`, `flush` (`ofstream::flush()`, a no-op while closed); `allowsAnsi()` is always false. `enum class OpenMode { append, truncate }` is declared in `FileStream.hpp`, as spec §8 defines it (review F-14). A write while closed is dropped (provisional, pending §13.17). There are no markers yet (§13.2). The name is set through `setName`, because the keywords are empty tags (spec §8, §13.55).
+   - **Each element knows its index** (review F-05). The constructor is `constexpr FileStream(uint8_t index)`, and the array is initialized explicitly, so it stays constant-initialized: `inline FileStream fileStreams[9] = { FileStream{0}, FileStream{1}, …, FileStream{8} };`. Without this, every element would hold index 0, and `file6` would write through the first `ofstream`.
+   - **Default name** (review F-09): the constructor sets the name to `cfg::defaultFileName` (spec §8, §13.7), so a file is never nameless.
    - **Constant-initialization risk.** A `std::ofstream` member gives `FileStream` a non-`constexpr` constructor. `fileStreams` would then be dynamically initialized, and a static constructor in another translation unit that writes to `file1` (directly or through `error`) would touch an unconstructed object. That breaks the §4 guarantee. A `std::ofstream` member would also put `<fstream>` into the common `FileStream.hpp`, which the library rules forbid (spec §1.1). So the nine `std::ofstream` objects live in a **function-local** static array inside `pc_FileStream.cpp`, constructed on the first `open()`. A namespace-scope array would be initialized at run time, which brings the initialization-order problem back. `FileStream` holds only its index, its name pointer and an `isOpen` flag, and it doesn't touch the array while closed. That keeps its constructor `constexpr` and its header free of the standard library. The function-local static is allowed here because §1.1 rule 5 applies to common and MC code, not to `pc_*` files. See D-4.
 6. **Keywords** (`Printer/Keywords.hpp`, spec §4, §13.55): the empty tag types `Message`, `Error`, `Debug` and `template <uint8_t N> struct File` (with `static_assert(N < 9)` and `using File0 = File<0>;` … `File8`), and the base keywords `inline constexpr Message message{};`, `Error error{};`, `Debug debug{};`, `File0 file0{};` … `File8 file8{};`. `File<N>` forwards `setName` / `open` / `close` to `fileStreams[N]`. Each type gets `static_assert(__has_trivial_destructor(T))`.
-7. **`Tests/pc/CaptureStream`**: records bytes, and records each `flush()` call as a mark in the same log, so a test can see where a flush happened. `allowsAnsi()` is settable per test (§12). It belongs to the PC suite; the MC suite will have its own.
+   - **The forwarding methods are `const`** (review F-03). `file0` is `inline constexpr`, so it is a const object, and only `const` members can be called on it. They change `fileStreams[N]`, not the keyword, so `const` is correct. They are not `constexpr`: they change a global at run time.
+   - `Keywords.hpp` includes `FileStream.hpp`, so `fileStreams` is declared before `File<N>`'s inline methods use it.
+   - **`struct EndLine {}; inline constexpr EndLine endLine{};`** (review F-08), for Phase 5's `operator<<(EndLine)`. `Flush` / `flush` and `Hold` / `hold` come with the Printer core plan.
+7. **`Tests/pc/CaptureStream`**: records bytes, and records each `flush()` call as a mark in the same log, so a test can see where a flush happened. `allowsAnsi()` is settable per test (§12) and **defaults to `false`** (review F-15); tests that check colour set it to `true`. It belongs to the PC suite; the MC suite will have its own.
 
 **Done when:** the core compiles in the PC build, and the `ColorTests` suite (`Tests/pc/test_color.cpp`, §4a) passes. Each test builds its own local `Stream` and `CaptureStream` (isolation, §4a):
 - C1: `allowsAnsi = true`, colour `darkGray`, "ab" gives `"\x1b[90mab"`; then `resetColor()` gives `"\x1b[0m"`.
@@ -198,31 +204,44 @@ Only what the binding and colour rules need.
 1. `Hardware/PrinterInit.hpp` declares `void printerPlatformInit();` and `void printerInit();` (spec §9, "Boot and binding").
 2. `Hardware/pc_PrinterInit.cpp` defines both:
    - `printerPlatformInit()`: `GetStdHandle(STD_OUTPUT_HANDLE)` → `GetConsoleMode` → `SetConsoleMode(mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)`. On success it sets `console0`'s ANSI flag; on any failure it leaves the flag false. Guarded by `#ifdef _WIN32`; on a non-Windows host the flag is true only when `isatty(STDOUT_FILENO)` is true. There is no register emulation, boot mock or clock check yet, because nothing uses registers in this slice.
-   - `printerInit()`: resolve each `PcSink` to an object through a `switch` (`none` → `&nullSink`, `console0`, `file0..file8`) and bind the three `pInner`s. Set `messageStream.color` / `errorStream.color` / `debugStream.color` from `cfg::*Color`, and each stream's `autoFlush` from `cfg::*AutoFlush`. There is nothing to bind for `fileStreams` on PC, and nothing at all for the keywords.
+   - `printerInit()`: resolve each `PcSink` to an object through a `switch` (`none` → `&nullSink`, `console0`, `file0..file8`) and bind the three streams with `bind(…)`. Set `messageStream.color` / `errorStream.color` / `debugStream.color` from `cfg::*Color`, and call each stream's `setAutoFlush(cfg::*AutoFlush)`. There is nothing to bind for `fileStreams` on PC, and nothing at all for the keywords.
 3. `Printer/Printer.hpp` / `.cpp`, the umbrella header (spec §13.28). It includes the keywords, the config and `Hardware/PrinterInit.hpp`, and declares `extern Printer prt2;`. The minimal `class Printer` has:
    - `BaseStream* pStream = nullptr;`
    - A constructor that calls `boot()`.
    - `void boot()`: idempotent through a static `booted` flag; on the first call it runs `printerPlatformInit()` and then `printerInit()`. The free functions stay public (§13.25).
-   - `operator<<(Message)`, `operator<<(Error)`, `operator<<(Debug)` and `template <uint8_t N> operator<<(File<N>)`: select `messageStream`, `errorStream`, `debugStream` or `fileStreams[N]` by the keyword's type (spec §4, §13.55). `operator<<(BaseStream&)` selects the given object itself; the tests use it with their local `Stream`s. All of them call `resetColor()` on the outgoing target first (mid-line switch, §5), then re-point `pStream`. Every `operator<<` returns `Printer&`, not a copy as in the old project, so a switch persists after the statement (spec §4).
-   - `operator<<(const char*)`: sends each byte to `pStream`; does nothing while `pStream == nullptr` (§4). If the target is a `Stream` with `autoFlush`, it then flushes (spec §4.1, §13.49).
-   - `endLine`: a keyword object whose `operator<<` sends `'\n'`, calls `pStream->resetColor()`, and then calls `pStream->flush()` (D-5, spec §13.40 as revised 2026‑10‑25).
+   - `operator<<(Message)`, `operator<<(Error)`, `operator<<(Debug)` and `template <uint8_t N> operator<<(File<N>)`: select `messageStream`, `errorStream`, `debugStream` or `fileStreams[N]` by the keyword's type (spec §4, §13.55). `operator<<(BaseStream&)` selects the given object itself; the tests use it with their local `Stream`s. Every `operator<<` returns `Printer&`, not a copy as in the old project, so a switch persists after the statement (spec §4).
+   - **All switches go through one private helper** (review F-01, F-06):
+     ```cpp
+     void select(BaseStream* next) {
+         if (pStream != nullptr && pStream != next) {
+             pStream->resetColor();   // mid-line switch, spec §5
+         }
+         pStream = next;
+     }
+     ```
+     A fresh `Printer` has no target, so there is nothing to reset. Selecting the stream that is already the target changes nothing, so the colour stays continuous: `p << a << "x" << a << "y"` is one colour run, not `x ESC[0m ESC[..m y`.
+   - `operator<<(const char*)`: sends each byte to `pStream`, then flushes if `pStream->autoFlush()` (spec §4.1, §13.49, §13.58). It does nothing while `pStream == nullptr` (§4), and a null `const char*` counts as an empty string (review F-16).
+   - `operator<<(EndLine)`: sends `'\n'`, calls `pStream->resetColor()`, then `pStream->flush()` (D-5, spec §13.40 as revised 2026‑10‑25). With no target it does nothing (review F-07).
 4. Demo `main.cpp`: exactly the program in §1. In an interactive console, the line appears in dark green.
 
 **Done when** the `BindingTests` (`Tests/pc/test_binding.cpp`) and `PrinterTests` (`Tests/pc/test_printer.cpp`) suites pass, run from `main()` (§1, §4a). `main.cpp` defines `Printer prt2 = {};`, so `prt2` has booted before any test runs.
 
 `BindingTests` looks at the globals, read-only unless stated:
-- B1 (safe before boot): compile-time. `static_assert`s on `constexpr Stream probe{};` show that a `Stream` is constant-initialized with `pInner == &nullSink` and `idle`; the same is done for `NullStream` and `FileStream`. At run time, a local `Stream` that was never bound takes a byte without crashing (it goes to `nullSink`). This replaces the earlier "probe object defined before `prt1`", which can't work now that the tests run after `prt2` has booted.
-- B2: `messageStream.pInner == &console0`, `errorStream.pInner == &fileStreams[1]` and `debugStream.pInner == &console0` (the §9 example values). Colours equal the `cfg::*Color` constants, and `autoFlush` equals `cfg::messageAutoFlush` / `cfg::errorAutoFlush` / `cfg::debugAutoFlush` (`false` / `true` / `false`).
+- B1 (safe before boot): compile-time. `static_assert`s on `constexpr Stream probe{};` show that a `Stream` is constant-initialized with `probe.inner() == &nullSink` and `idle`; the same is done for `NullStream` and `FileStream`. At run time, a local `Stream` that was never bound takes a byte without crashing (it goes to `nullSink`). This replaces the earlier "probe object defined before `prt1`", which can't work now that the tests run after `prt2` has booted.
+- B2: `messageStream.inner() == &console0`, `errorStream.inner() == &console0` and `debugStream.inner() == &console0` (the §9 example values). Colours equal the `cfg::*Color` constants, and `autoFlush()` equals `cfg::messageAutoFlush` / `cfg::errorAutoFlush` / `cfg::debugAutoFlush` (`false` / `true` / `false`).
 - B3: `console0.allowsAnsi()` matches an independent `GetConsoleMode` check on `STD_OUTPUT_HANDLE`: true in an interactive Windows 10 console, false when stdout is redirected. Run under `ctest`, or as `printer_2 > out.txt`, to exercise the fallback path.
-- B4 (idempotent boot): with the RAII snapshot (§4a), set `messageStream.pInner = &capture`, call `prt2.boot()`, and check that `messageStream.pInner` is still `&capture`. Constructing a local `Printer` doesn't rebind either. The snapshot restores `messageStream` at the end of the test.
-- B5 (keywords and aliases, spec §4, §13.55): with the RAII snapshot, bind `messageStream.pInner` to a capture. With a local `Printer p` (so `prt2`'s target is untouched, §4a), `p << message << "a"` and, through a local alias `constexpr Message alias{};`, `p << alias << "b"` both land in the same capture as `"ab"`. A `File6 recorder{}` selects `&fileStreams[6]`, checked through a local `Printer`'s `pStream`. Compile-time: `File<9>` must not compile (checked once by hand, then removed, like the Phase 2 include check).
+- B4 (idempotent boot): with the RAII snapshot (§4a), call `messageStream.bind(&capture)`, call `prt2.boot()`, and check that `messageStream.inner()` is still `&capture`. Constructing a local `Printer` doesn't rebind either. The snapshot restores `messageStream` at the end of the test.
+- B5 (keywords and aliases, spec §4, §13.55): with the RAII snapshot, bind `messageStream` to a capture (`allowsAnsi = false`, its default). With a local `Printer p` (so `prt2`'s target is untouched, §4a), `p << message << "a"` and, through a local alias `constexpr Message alias{};`, `p << alias << "b"` both land in the same capture as `"ab"`. A `File6 recorder{}` selects `&fileStreams[6]`, checked through a local `Printer`'s `pStream`. Compile-time: `File<9>` must not compile (checked once by hand, then removed, like the Phase 2 include check).
 - B6 (`none` target, spec §13.57): the `PcSink` → object resolver used by `printerInit()` maps `PcSink::none` to `&nullSink`. For this, the resolver is a plain function declared in `Hardware/pc_PrinterInit.hpp` (PC code, included by `pc_PrinterInit.cpp` and the PC tests), not a lambda inside `printerInit()`. A local `Printer` with a local `Stream` bound to the result takes a line and drops it.
+- B7 (each file keyword reaches its own file, review F-05): `file6.open("<temp dir>/b7_six.txt", OpenMode::truncate)`, write `"six"` through a local `Printer`, `file6.close()`; then read the file back with `std::ifstream` and check that it holds `"six"`. Also check that `fileStreams[0]` was never opened. The temporary file is removed at the end. This proves that element 6 uses the sixth `ofstream`, not the first.
 
 `PrinterTests` uses only local objects: a local `Printer`, local `Stream`s bound to local `CaptureStream`s (`allowsAnsi = true`), with colours set per test:
 - P1: `p << msg << "Hello Printer 2!" << endLine`, with `msg.color = darkGreen`, gives `"\x1b[32mHello Printer 2!\n\x1b[0m"` followed by one flush mark (`endLine` flushes, spec §13.40).
 - P2 (mid-line switch): `p << a << "a" << b << "b" << endLine`, with `a` dark gray and `b` bright red, gives `"\x1b[90ma\x1b[0m"` on `a`'s capture, with no flush mark, and `"\x1b[91mb\n\x1b[0m"` plus one flush mark on `b`'s.
 - P3 (`nullptr` guard): a fresh local `Printer` has `pStream == nullptr`, and `p << "x"` emits nothing and doesn't crash.
-- P4 (`autoFlush`): with `e.autoFlush = true`, `p << e << "a" << "b"` gives `"a"`, a flush mark, `"b"`, a flush mark. A `'\n'` inside a string causes no extra flush on a stream without `autoFlush` (spec §4.1).
+- P4 (`autoFlush`): with `e.setAutoFlush(true)`, `p << e << "a" << "b"` gives `"a"`, a flush mark, `"b"`, a flush mark. `e` is selected through `operator<<(BaseStream&)`, so this also proves that `autoFlush()` works through the base pointer (review F-02, R-04, R-05). A `'\n'` inside a string causes no extra flush on a stream without `autoFlush` (spec §4.1).
+- P5 (a fresh `Printer`, review F-01, F-07, F-16): on a new local `Printer`, `p << endLine` emits nothing and doesn't crash, `p << (const char*)nullptr` emits nothing, and then `p << s << "x"` selects the local stream `s` without crashing and gives `"x"`.
+- P6 (selecting the same stream again, review F-06): with `allowsAnsi = true` and colour dark gray, `p << a << "x" << a << "y"` gives `"\x1b[90mxy"`, with no `ESC[0m` between `x` and `y`.
 
 Manual check, recorded in the handoff: running `printer_2` in a Windows 10 console shows the test summary, then "Hello Printer 2!" in dark green, and no raw `ESC[` text.
 

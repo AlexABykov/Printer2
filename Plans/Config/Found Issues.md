@@ -202,3 +202,31 @@ These are the paths most likely to expose plan gaps during implementation.
 - **Phase 1 plan:** Approve after minor cleanup: update the stale Phase 0/build-status text and optionally tighten `isValid()` for `stopBits`/`flowControl`. The header itself is ready to implement.
 - **Base plan Phases 4–5:** Do not approve as written until F-01, F-02, F-03, F-04, F-05 and F-06 are resolved in the plan and the spec. These are not cosmetic; they affect whether the documented API compiles and whether tests P1/P2/P4/B5 can pass.
 - **Spec updates needed:** The fixes for F-02, F-03 and F-04 change or clarify the public model, so the spec should be updated together with the base plan: how `autoFlush` is exposed, that `File<N>` forwarding methods are `const`, and what the PC `error` target does when its file is closed.
+
+## Resolution (2026‑10‑26)
+
+*Added after review; the review text above is unchanged.* Each finding was checked against the documents. "Fixed" means the plan or the spec now says what to build; nothing is implemented yet.
+
+| ID | Outcome | Where |
+|---|---|---|
+| F-01 | **Fixed.** Every target switch goes through one private `Printer::select(next)`, which resets the old target only if it exists and differs from `next`. New test P5 | Base plan Phase 5; spec §4, §5 |
+| F-02 | **Fixed, decided by BY (spec §13.58):** a virtual `autoFlush()` on `BaseStream`, overridden by `Stream`; the flag is set with `setAutoFlush(bool)`. P4 now also proves it through `operator<<(BaseStream&)` | Base plan Phase 4, 5; spec §3, §4.1 |
+| F-03 | **Fixed.** `File<N>::setName` / `open` / `close` are `const` members. Not `constexpr`, as the suggested snippet had it: they change a global at run time | Base plan Phase 4; spec §8 |
+| F-04 | **Fixed, decided by BY (spec §13.60):** PC errors go to `console0` in red, MC errors to USART3. The PC example no longer targets the unopened `file1`. B2 re-baselined | Spec §9; base plan B2 |
+| F-05 | **Fixed.** `constexpr FileStream(uint8_t index)` and an explicitly initialized `fileStreams[9]`. New test B7 writes through `file6` and reads the file back | Base plan Phase 4, B7 |
+| F-06 | **Fixed** by the same `select()` helper. New test P6 | Base plan Phase 5; spec §5 |
+| F-07 | **Fixed.** `operator<<(EndLine)` does nothing without a target. Covered by P5 | Base plan Phase 5; spec §4 |
+| F-08 | **Fixed.** `EndLine` / `endLine` is declared in `Keywords.hpp`; `Flush` and `Hold` come with the core plan | Base plan Phase 4 |
+| F-09 | **Fixed.** The `FileStream` constructor sets the name to `cfg::defaultFileName` | Base plan Phase 4 |
+| F-10 | **Documented, decided by BY (spec §13.59).** `isValid()` doesn't check enum ranges; a cast is the caller's responsibility. `config.hpp` is unchanged | Spec §9; Phase 1 plan §3.1 notes |
+| F-11 | **Fixed, and broader than reported:** `printerInit()` must also *write* `pInner` from another file. `Stream` gets a public `bind(BaseStream*)` and `constexpr inner()`; B1, B2 and B4 use them | Base plan Phase 4, B1, B2, B4; spec §3 |
+| F-12 | **Fixed.** Confirmed in the repository: `config.h` is empty and `main()` is in `main.cpp`. The base plan's status note and Phase 0 step 1 have dated corrections | Base plan header, Phase 0 |
+| F-13 | **No change.** The Phase 1 plan already prescribes the manual check, and Phase 2 automates it | — |
+| F-14 | **Fixed.** `OpenMode` is declared in `FileStream.hpp`, as spec §8 defines it | Base plan Phase 4 |
+| F-15 | **Fixed.** `CaptureStream::allowsAnsi()` defaults to `false` | Base plan Phase 4 |
+| F-16 | **Fixed.** A null `const char*` counts as an empty string. Covered by P5 | Base plan Phase 5 |
+| F-17 | **Rejected.** An `enum class` value can't be invalid without a cast, so the Phase 3 check is removed rather than specified | Base plan Phase 3 |
+
+**Risky paths:** R-01, R-02 → P5; R-03 → P6; R-04, R-05 → P4. With F-02's chosen option there is no `operator<<(Stream&)`, so R-04 means "P4 passes through `BaseStream&`". R-06 → compiled by every file-keyword call in B7; R-07 → B7; R-08 is gone with F-04; R-09 → B4; R-10 → B3; R-11 → B5; R-12 → Phase 2.
+
+**Found while resolving:** `Keywords.hpp` must include `FileStream.hpp`, so that `fileStreams` is declared before `File<N>`'s inline methods use it (base plan Phase 4).

@@ -176,6 +176,67 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 6) — **The AI review in `Plans/Config/Found Issues.md` is resolved: 14 findings fixed in the plan or the spec, 1 documented as a limit, 1 needed no change, 1 rejected. PC errors now go to the console in red. Documentation only; the base plan is ready for BY's approval again.**
+
+**State.** Documentation only. No source file was created or changed and nothing was built. Session 5 and the review file are committed by BY (`e65d732`, `56df4d0`). The changes below are in the working tree, uncommitted (BY commits). `README.md` and `AGENTS.md` are unchanged.
+
+### What changed
+
+- **`Plans/Config/Found Issues.md`:** a new "Resolution (2026‑10‑26)" section at the end, with one row per finding (outcome and where it was fixed), the mapping of the risky paths R-01 … R-12 to tests, and one issue found while resolving. The review text itself is unchanged.
+- **`Plans/Config/Config Base Plan.md`:**
+  - **Phase 3:** the `PcSink` validity `static_assert` is removed (F-17).
+  - **Phase 4:**
+    - `BaseStream::autoFlush()` (F-02);
+    - `Stream::bind()` / `inner()` / `setAutoFlush()` (F-11);
+    - `FileStream` index constructor and the explicitly initialized `fileStreams[9]` (F-05);
+    - the default file name (F-09) and `OpenMode` (F-14);
+    - `const` forwarding methods on `File<N>` (F-03), and `Keywords.hpp` including `FileStream.hpp`;
+    - `EndLine` (F-08);
+    - `CaptureStream` defaulting to `allowsAnsi = false` (F-15).
+  - **Phase 5:**
+    - one private `select()` helper for all target switches (F-01, F-06);
+    - null guards for `endLine` and for a null `const char*` (F-07, F-16);
+    - auto-flush through `pStream->autoFlush()`.
+  - **Tests:** B1, B2, B4 and P4 updated; **B7, P5 and P6 are new.**
+  - **Header and Phase 0:** dated corrections. `config.h` is already empty and `main()` already lives in `main.cpp` (F-12).
+- **`Plans/Config/Config Specification.md`:**
+  - **§3:** `autoFlush()` on `BaseStream`; `bind()` / `inner()` on `Stream`.
+  - **§4, §5:** every operator is null-safe; selecting the current target again is not a switch.
+  - **§8:** the file keyword methods are `const`.
+  - **§9:**
+    - the PC example's `errorTarget` is `console0`, with a dated note;
+    - `isValid()`'s enum limit is documented.
+  - **§13:** new decisions 13.58, 13.59 and 13.60.
+- **`Plans/Config/Phase 1 plan.md`:** one note under §3.1, "what `isValid` does not check" (F-10). The header in §3.1 is unchanged, so its scratch build still stands.
+
+**Tests re-baselined (plan only, nothing is built):**
+- **B2:** `errorStream.inner()` is now `&console0`, not `&fileStreams[1]`, because the PC example's error target changed (13.60).
+- **B1, B2, B4:** they read and write the binding through `inner()` / `bind()` instead of the member `pInner` (F-11), and P4 sets auto-flush with `setAutoFlush(true)`. What these tests check is unchanged.
+
+### Decisions
+
+Recorded in spec §13 with BY's wording.
+
+| ID | Decision | Date |
+|---|---|---|
+| 13.58 | `autoFlush()` is a virtual query on `BaseStream` (default `false`), overridden by `Stream` (F-02) | 2026‑10‑26 |
+| 13.59 | `isValid()` checks no enum ranges; the limit is documented (F-10) | 2026‑10‑26 |
+| 13.60 | Errors go to the PC console in red and to USART3 on the MC: "On PC to console, use red color. On MC to USART3". The demo prints them with `prt2 << hold << error << … << endLine` (F-04) | 2026‑10‑26 |
+
+### Open
+
+1. **BY's approval** of `Config Base Plan.md` and `Phase 1 plan.md`. The review recommended approving Phase 1 after minor cleanup, which is done (F-10, F-12). It recommended holding Phases 4–5 until F-01 … F-06 were fixed; they now are.
+2. **Still open from earlier sessions:**
+   - the known limit of `none` (a silenced call still formats);
+   - spec 13.19 (misuse assert), 13.50, 13.51, 13.52, 13.53, 13.56;
+   - spec 13.1, 13.2, 13.11, 13.12, 13.14, 13.16, 13.17, 13.20, the rest of 13.22, 13.25, 13.31, 13.34, 13.38 and 13.42.
+
+### Notes for the incoming developer
+
+- **Read `Found Issues.md` with its Resolution table.** The review describes the plan as it stood before session 6; the table says where each point now stands.
+- **Do not copy the review's F-03 snippet literally.** It marks the `File<N>` methods `constexpr`. They must be `const`, but not `constexpr`, because they change `fileStreams[N]` at run time.
+- **With the default configuration, all three PC roles share `console0`.** They are told apart by colour only: green `message`, red `error`, gray `debug`.
+
 ## Mailbox entry — 2026-10-26 (session 5) — **A third output role, `debug`, and a `none` target that switches any role off. Documentation only; next is Phase 0 / Phase 1.**
 
 **State.** Documentation only. No source file was created or changed and nothing was built. Session 4 is committed by BY (`36fd760`, `94a1ce2`). The changes below are in the working tree, uncommitted (BY commits). `Plans/Config/Config Request.md`, `AGENTS.md` and `Plans/Config/Phase 1 plan.md` are unchanged: `config.hpp` holds no role constants, so Phase 1 is not affected.
