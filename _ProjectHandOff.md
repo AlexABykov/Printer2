@@ -176,6 +176,59 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 12) — **Phase 2 implemented: `pc` / `mc` presets, prefix-based source selection, the include allow-list, and the PC suite with `ConfigTests`, run from `main()`. Built and green. One new open item: the exe needs MinGW's DLLs on the PATH.**
+
+**State.** Built and green, uncommitted (BY commits). BY approved the Phase 2 plan ("good enough"). Its §5 provisional answers Q-1 … Q-7 are used as written. `config.hpp`, `AGENTS.md` and the spec are unchanged.
+
+### What changed
+
+The files were copied from the scratch copy (`%TEMP%/p2_phase2`) after checking that it matches the plan's code blocks byte for byte.
+- **`CMakeLists.txt`**, rewritten (plan §3.1); **`CMakePresets.json`**, new (§3.3); **`cmake/arm-none-eabi.cmake`**, new (§3.2).
+- **`main.cpp`:** runs `Tests::runAll()` (§3.8).
+- **`Tests/Tests.hpp`**, **`Tests/pc/TestResults.hpp`** and **`Tests/pc/pc_Tests.cpp`**, all new (§3.4–§3.6).
+- **`Tests/pc/test_config.cpp`:** a new header comment, the `TestResults.hpp` include, and `runConfigTests()` with the address check (§3.7). The `static_assert`s are unchanged.
+- **`Tests/pc/test_config_address_probe.cpp`:** the comment only.
+- **`Plans/Config/Phase 2 plan.md`:** the status is set to approved and implemented, the done criteria are ticked, an "Implemented" note is in the build-status block, and there is a new §5 Q-8.
+
+### Built
+
+MinGW g++ 15.2.0 and CMake 4.3.1, from the repository root, in Git Bash with both `bin/` directories on the PATH.
+
+| Command | Result |
+|---|---|
+| `cmake --preset pc` | configured, into `cmake-build-pc/` |
+| `cmake --build --preset pc` | `Built target printer`, `Built target printer_2`; no warnings under `-Werror` |
+| `cmake-build-pc/printer_2.exe` | `ConfigTests total=1 passed=1 failed=0`, "✅ ALL TESTS PASSED", exit 0 |
+| `printer_2.exe > out.txt` | exit 0 |
+| `ctest` (in `cmake-build-pc`) | `100% tests passed, 0 tests failed out of 1` |
+| `cmake --preset mc` | "arm-none-eabi-g++ was not found on the PATH …" (no ARM toolchain installed) |
+| Include path | `-IC:/Work/Printer2` only |
+| §3.10 check 1: a deliberately failing `check()` | "❌ SOME TESTS FAILED", `- ConfigTests: deliberate failure`, exit 1; reverted |
+| §3.10 check 2: `#include <array>` in `config.hpp`, plain build | "`<array>` is not allowed in Common or MC code"; reverted |
+| §3.10 check 4: `Tests/Tests.hpp` renamed away | configure: "… cannot be read"; restored |
+| §3.10 check 3, through `cmd /c` with MinGW on the PATH | under `chcp 437` and `chcp 65001`, plain and redirected: exit 0, and the code page is unchanged afterwards |
+
+After the checks, a fresh configure and build were green again, and `config.hpp` has no diff.
+
+### Decisions
+
+- **BY approved `Phase 2 plan.md`**, 2026‑10‑26: "I think that Config implementation plan Phase 2 is good enough."
+- **The §5 answers Q-1 … Q-7 are applied as the plan's provisional answers.** They are not recorded as §13 decisions, because BY approved the plan, not each answer.
+
+### Open
+
+1. **Q-8 (new): the exe needs MinGW's runtime DLLs.** Run from PowerShell without MinGW on the PATH, `printer_2.exe` exits with `0xC0000135`. A full `-static` link fails with this MinGW. `-static-libgcc -static-libstdc++` still leaves `libwinpthread-1.dll`. The options are copying the DLLs after each build, or the rule "run it from CLion or a prepared shell". BY decides.
+2. **Q-3, and with it the `AGENTS.md` edit:** `main.cpp` is already checked under the Common rules. Should `AGENTS.md` §1 name it (plan §3.11)?
+3. **BY's own check:** run `printer_2.exe` in an interactive `cmd.exe` window and see ✅ rendered (plan §3.10 check 3). The agent shell has no visible console.
+4. **Untracked files to add:** `.gitignore`, `CMakePresets.json`, `cmake/` and `Tests/`.
+5. **Still open:** as listed in session 9.
+
+### Notes for the incoming developer
+
+- **Build directories.** The build tree is now `cmake-build-pc/`, made by the preset. CLion's old `cmake-build-debug/` profile and the hand-build `build/` directory are no longer used, and both are ignored.
+- **The Phase 1 hand-compile commands are retired.** Both test files are part of `printer_2`.
+- **Next is Phase 3,** `config_pc.hpp`. The include check covers it automatically.
+
 ## Mailbox entry — 2026-10-26 (session 11) — **Second Phase 2 review resolved: "approvable, no re-review needed". One new scratch fact: `-Wpedantic -Werror` already rejects any `#include_next` at compile time. Plan awaits BY's approval.**
 
 **State.** Documentation only; the source is still unchanged. BY replaced the first review in `Phase 2 Found Issues.md` with the second one; the first review stays in `31013f4` and its resolution in `17d8116`. The changes below are in the working tree, uncommitted (BY commits).

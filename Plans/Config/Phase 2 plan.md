@@ -1,5 +1,5 @@
 # Phase 2 Plan — Platform selection, CMake and the PC test suite
-**Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
+**Status:** approved by BY(User), 2026‑10‑26 ("good enough"); implemented the same day.  
 **Date:** 2026‑10‑26 (revised 2026‑10‑26: review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) resolved, §8.1; second review resolved, §8.2)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 2 (and §4a, the PC test suite)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §11, §12, §13.28, §13.35, §13.36, §13.37, §13.39, §13.41  
@@ -33,6 +33,13 @@
 > | `#include <array>` and `# include<array>` in `config.hpp`, plain build | both still rejected; the clean build passes again after reverting |
 > | `Tests/Tests.hpp` removed, `cmake --preset pc` | configure fails: "file STRINGS file "…/Tests/Tests.hpp" cannot be read"; then restored |
 > | `#include_next <stdint.h>` in `config.hpp` (second review, §8.2) | the include check **passes** it (allowed header); the compile then fails: "'#include_next' is a GCC extension [-Werror=pedantic]"; reverted, clean build green again |
+>
+> **Implemented (2026‑10‑26).** The §3 files are in the repository's working tree, uncommitted (BY commits). They were copied from the scratch copy after checking that it matches this document's code blocks byte for byte. `config.hpp` is unchanged. The same toolchain was used, from the repository root. Details are in the 2026‑10‑26 (session 12) handoff entry.
+> - **Build and run:** `cmake --preset pc` and `cmake --build --preset pc` succeeded with no warnings. `printer_2.exe` passed 1 of 1 and exited 0, and so did the redirected run. `ctest` passed. The include path is `-IC:/Work/Printer2` only.
+> - **MC preset:** `cmake --preset mc` failed with "arm-none-eabi-g++ was not found".
+> - **§3.10 checks 1, 2 and 4** gave the expected results, and each was reverted.
+> - **§3.10 check 3**, partly: through `cmd /c`, with `chcp 437` and with `chcp 65001`, both plain and redirected, every run exited 0 and the code page was the same afterwards. Seeing ✅ in an interactive `cmd.exe` window is still BY's check, because the agent shell has no visible console.
+> - **Finding (§5 Q-8):** outside a shell that has MinGW's `bin` on the PATH, `printer_2.exe` doesn't start. It exits with `0xC0000135` (DLL not found), because it imports `libstdc++-6.dll` and `libgcc_s_seh-1.dll`. Static-link attempts are recorded in Q-8; none is applied.
 
 ## 1. Goal and done criteria
 
@@ -45,14 +52,14 @@ Turn today's single-file build into the build that the rest of the slice grows i
 After this phase, nothing is compiled by hand anymore: the two Phase 1 test files are part of `printer_2`, and they are rebuilt with every build.
 
 **Done when:**
-- [ ] `CMakeLists.txt`, `CMakePresets.json` and `cmake/arm-none-eabi.cmake` have the content in §3.1–§3.3.
-- [ ] `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp` and `Tests/pc/pc_Tests.cpp` exist (§3.4–§3.6); `test_config.cpp` gains `runConfigTests()` (§3.7); `main.cpp` runs the tests (§3.8).
-- [ ] `cmake --preset pc` and `cmake --build --preset pc` succeed with no warnings under `-Werror`.
-- [ ] `printer_2` prints the summary with "✅ ALL TESTS PASSED" and exits 0; `ctest` passes.
-- [ ] Manual checks, each reverted afterwards (§3.10): a failing `check()` prints "❌ SOME TESTS FAILED" with the test's name and exits 1; `#include <array>` in `config.hpp` fails the next plain build.
-- [ ] The `printer` target's only include directory is the repository root (no vendor header reachable; handoff v0 DoD item).
-- [ ] `cmake --preset mc` stops with the "arm-none-eabi-g++ was not found" message on a machine without the ARM toolchain.
-- [ ] Results (compiler, commands, exit codes) are recorded in a new `_ProjectHandOff.md` mailbox entry (`AGENTS.md` §5).
+- [x] `CMakeLists.txt`, `CMakePresets.json` and `cmake/arm-none-eabi.cmake` have the content in §3.1–§3.3.
+- [x] `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp` and `Tests/pc/pc_Tests.cpp` exist (§3.4–§3.6); `test_config.cpp` gains `runConfigTests()` (§3.7); `main.cpp` runs the tests (§3.8).
+- [x] `cmake --preset pc` and `cmake --build --preset pc` succeed with no warnings under `-Werror`.
+- [x] `printer_2` prints the summary with "✅ ALL TESTS PASSED" and exits 0; `ctest` passes.
+- [x] Manual checks, each reverted afterwards (§3.10): a failing `check()` prints "❌ SOME TESTS FAILED" with the test's name and exits 1; `#include <array>` in `config.hpp` fails the next plain build.
+- [x] The `printer` target's only include directory is the repository root (no vendor header reachable; handoff v0 DoD item).
+- [x] `cmake --preset mc` stops with the "arm-none-eabi-g++ was not found" message on a machine without the ARM toolchain.
+- [x] Results (compiler, commands, exit codes) are recorded in a new `_ProjectHandOff.md` mailbox entry (`AGENTS.md` §5).
 
 ## 2. Starting point
 
@@ -518,6 +525,7 @@ Each has a provisional answer, already used in the §3 code.
 | Q-5 | Should the PC runner switch the Windows console to UTF-8 for the emoji? | **Yes, and restore it** (§3.6). A console's code page outlives the process in `cmd.exe`, so it is put back. The alternative is to leave the console alone and accept mojibake in a non-UTF-8 console. In the scratch run, Git Bash showed the emoji correctly; CLion's run window and `cmd.exe` are not checked yet (§3.10 check 3) |
 | Q-6 | With an ARM toolchain present, should the `mc` preset configure `printer` only, or stop with "MC build not available yet"? | **`printer` only** (§3.1), so the first ARM compile of the Common files can happen as soon as a toolchain is installed. This path is **untested**: no ARM toolchain is installed (build-status note) |
 | Q-7 | Presets set `CMAKE_BUILD_TYPE=Debug`. Add `pc-release` / `mc-release`? | **Not yet.** One preset per platform, as spec §11 describes. Release presets can come with the first size or speed measurement |
+| Q-8 | *Added 2026‑10‑26, during implementation.* `printer_2.exe` imports `libstdc++-6.dll` and `libgcc_s_seh-1.dll`, so it starts only where MinGW's `bin` is on the PATH (CLion, or a prepared shell). Make the exe start from any `cmd.exe`? | **Open, nothing applied.** Tried in scratch, 2026‑10‑26:<br>• `-static` doesn't link with CLion's MinGW (undefined `__intrinsic_setjmpex` in `libwinpthread`, `__ms_vsnprintf` in `libmsvcrt`).<br>• `-static-libgcc -static-libstdc++` links, but the exe still imports `libwinpthread-1.dll`, and adding `-Wl,-Bstatic -lwinpthread` doesn't change that.<br>The remaining options are: copy the three DLLs next to the exe after each build, or keep the rule "run it from CLion, or with MinGW's `bin` on the PATH". The plan isn't changed, so until BY decides, the rule applies. It matters for the interactive console checks (§3.10 check 3, base plan B3) |
 
 ## 6. Risks
 
