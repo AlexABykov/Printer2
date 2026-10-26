@@ -176,6 +176,39 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 11) — **Second Phase 2 review resolved: "approvable, no re-review needed". One new scratch fact: `-Wpedantic -Werror` already rejects any `#include_next` at compile time. Plan awaits BY's approval.**
+
+**State.** Documentation only; the source is still unchanged. BY replaced the first review in `Phase 2 Found Issues.md` with the second one; the first review stays in `31013f4` and its resolution in `17d8116`. The changes below are in the working tree, uncommitted (BY commits).
+
+### What changed
+
+- **`Plans/Config/Phase 2 plan.md`:**
+  - **§8** is split: §8.1 (first review) and a new §8.2 (second review).
+  - **Build-status note:** a new row for the `#include_next <stdint.h>` check.
+  - **§3.1 notes:** the `#include_next` scope (what the check adds over `-Wpedantic`) and the tightened "any order" wording.
+  - **§3.10 check 3:** a non-redirected run after `chcp 437`.
+- **`Plans/Config/Config Base Plan.md`:** in the Phase 2 note, "accepts `#include_next` lines" became "reads".
+- **`Plans/Config/Phase 2 Found Issues.md`:** a "Resolution (2026‑10‑26)" section at the end; the review text is unchanged.
+
+### Built
+
+In the scratch copy (`%TEMP%/p2_phase2`), with MinGW g++ 15.2.0 and CMake 4.3.1:
+- With `#include_next <stdint.h>` added to `config.hpp`, the include check passed, and the compile failed with "'#include_next' is a GCC extension [-Werror=pedantic]".
+- After reverting, the build was green again.
+
+### Decisions
+
+None new.
+
+### Open
+
+1. **BY's approval of `Phase 2 plan.md`**, and answers to §5 Q-1 … Q-7.
+2. **Still open:** as listed in session 9.
+
+### Notes for the incoming developer
+
+- **`AGENTS.md` doesn't mention `main.cpp` on purpose.** It changes only if BY confirms Q-3 (plan §3.11).
+
 ## Mailbox entry — 2026-10-26 (session 10) — **The review `Plans/Config/Phase 2 Found Issues.md` is resolved: 6 findings fixed, 2 needed no change. The include check now also catches `#include_next`. Rebuilt in scratch, still green. The Phase 2 plan awaits BY's approval.**
 
 **State.** Documentation only in the repository; the source is still unchanged. The changes below are in the working tree, uncommitted (BY commits).

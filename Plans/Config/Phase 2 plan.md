@@ -1,6 +1,6 @@
 # Phase 2 Plan — Platform selection, CMake and the PC test suite
 **Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
-**Date:** 2026‑10‑26 (revised 2026‑10‑26: review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) resolved, §8)  
+**Date:** 2026‑10‑26 (revised 2026‑10‑26: review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) resolved, §8.1; second review resolved, §8.2)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 2 (and §4a, the PC test suite)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §11, §12, §13.28, §13.35, §13.36, §13.37, §13.39, §13.41  
 **Rules:** [`AGENTS.md`](../../AGENTS.md) §1 (code areas), §2.4 (enforcement), §4 (tests)
@@ -32,6 +32,7 @@
 > | `#include_next <array>` in `config.hpp`, plain build | rejected (before the fix, configure passed) |
 > | `#include <array>` and `# include<array>` in `config.hpp`, plain build | both still rejected; the clean build passes again after reverting |
 > | `Tests/Tests.hpp` removed, `cmake --preset pc` | configure fails: "file STRINGS file "…/Tests/Tests.hpp" cannot be read"; then restored |
+> | `#include_next <stdint.h>` in `config.hpp` (second review, §8.2) | the include check **passes** it (allowed header); the compile then fails: "'#include_next' is a GCC extension [-Werror=pedantic]"; reverted, clean build green again |
 
 ## 1. Goal and done criteria
 
@@ -176,8 +177,8 @@ Notes on the code:
 
   The MC files are checked in **both** configurations, so a forbidden include in an `mc_*` file fails the PC build at once and doesn't wait for the first ARM build.
 - **Not checked:** `pc_*.cpp` files, `pc_*` headers that only `pc_*.cpp` files include, and `Tests/pc/` (PC code, `AGENTS.md` §3, §4).
-- **The check is the base plan's function, widened to `#include_next`** (review P2-03). It reads each file's own `#include <...>` and `#include_next <...>` lines; the header name is now the regex's second group, hence `"\\2"`. A commented-out `// #include <array>` is not matched, because the regex wants `#` as the first non-blank character.
-- **A listed file that is missing fails configure** ("file STRINGS file … cannot be read"), so the check can't pass silently because a file doesn't exist yet (review P2-02, checked in scratch). The order in which §3.1–§3.8 are written therefore doesn't matter.
+- **The check is the base plan's function, widened to `#include_next`** (review P2-03). It reads each file's own `#include <...>` and `#include_next <...>` lines; the header name is now the regex's second group, hence `"\\2"`. An allowed header passes in either spelling. `-Wpedantic -Werror` already rejects `#include_next` in every file that is compiled ("'#include_next' is a GCC extension"). So the widened check matters for files that the current configuration doesn't compile, such as `mc_*` files in the PC configuration, and it reports at configure time. A commented-out `// #include <array>` is not matched, because the regex wants `#` as the first non-blank character.
+- **A listed file that is missing fails configure** ("file STRINGS file … cannot be read"), so the check can't pass silently because a file doesn't exist yet (review P2-02, checked in scratch). The files of §3.1–§3.8 can therefore be written in any order. A configure before all listed files exist fails with "cannot be read", which is the intended guard; it is not a state to build in.
 - **Sources are collected by glob** (§5 Q-1). `CONFIGURE_DEPENDS` makes a plain build notice a new or removed file, as the scratch build showed with `pc_Probe.cpp`. The prefix filter is the whole of link-time platform selection: on the PC, `printer` compiles the Common files and the `pc_*` files, and the `mc_*` files are never compiled.
 - **`printer` has no `.cpp` file yet.** It holds `config.hpp` only, so it is an empty archive. `LINKER_LANGUAGE CXX` is needed because CMake can't infer the language from headers alone. It is a temporary workaround: Phase 4 removes the line when its first `.cpp` lands (review P2-04).
 - **`printer_warnings`** applies `-Wall -Wextra -Wpedantic -Werror` to both targets (§5 Q-2), and the MC rules' `-fno-exceptions -fno-rtti -fno-threadsafe-statics` in the MC configuration. They are set per target, so a user project that links `printer` doesn't inherit `-Werror`.
@@ -482,7 +483,7 @@ The Phase 1 hand-compile commands (`g++ … -c Tests/pc/test_config.cpp`) and th
 
 1. **A failing check.** Add `r.check("deliberate failure", false);` before `return r;` in `runConfigTests()`, then build and run. Expect "❌ SOME TESTS FAILED", `- ConfigTests: deliberate failure` and exit 1. Revert.
 2. **A forbidden include.** Add `#include <array>` to `Printer/Config/config.hpp`, then run a plain `cmake --build --preset pc`, without reconfiguring. Expect configure to re-run and fail with "`<array>` is not allowed in Common or MC code". Revert, and build again.
-3. **The console** (not in the scratch run). Run `printer_2.exe` from `cmd.exe` and check that ✅ shows as an emoji, not as mojibake, and that `chcp` shows the old code page afterwards (§5 Q-5). Repeat with `printer_2.exe > out.txt`, once after `chcp 65001` and once after `chcp 437` (or the machine's default code page): in both cases exit 0, and `chcp` shows the code page that was set before the run (review P2-01).
+3. **The console** (not in the scratch run). Run `printer_2.exe` from `cmd.exe` and check that ✅ shows as an emoji, not as mojibake, and that `chcp` shows the old code page afterwards (§5 Q-5). Then run it again after `chcp 437` (or the machine's default non-UTF-8 code page). The runner switches to UTF-8 itself, so ✅ should still show correctly, and `chcp` shows 437 afterwards. If the console refused UTF-8, the expected result is mojibake in the summary, but still exit 0 and 437 restored. Repeat both with `printer_2.exe > out.txt`, once after `chcp 65001` and once after `chcp 437`: in both cases exit 0, and `chcp` shows the code page that was set before the run (review P2-01, second review §8.2).
 4. **A missing checked file.** Rename `Tests/Tests.hpp` away, then run `cmake --preset pc`. Expect configure to fail with "cannot be read" (review P2-02). Restore it.
 
 ### 3.11 Record
@@ -533,7 +534,9 @@ Phase 3 of the base plan: `Printer/Config/config_pc.hpp` (spec §9). It is data 
 
 ## 8. Review resolution (2026‑10‑26)
 
-The review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) judged the plan approvable with small fixes. Each finding was checked against the scratch build before deciding.
+### 8.1 First review
+
+The first review (committed as `31013f4`; the file [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) now holds the second review) judged the plan approvable with small fixes. Each finding was checked against the scratch build before deciding.
 
 | ID | Finding | Resolution |
 |---|---|---|
@@ -551,3 +554,15 @@ The review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) judged the
 - D-1 and D-2 are decisions 13.61 (`baudRate`) and 13.62 (`auto`), from session 8.
 
 F-13 (the manual include check) is resolved by this phase, as the review says.
+
+### 8.2 Second review
+
+The second review (the current `Phase 2 Found Issues.md`) checked §8.1 and judged the plan **approvable**, with no re-review needed. Its points:
+
+| Point | Resolution |
+|---|---|
+| Confirm P2-07 in the base plan | **Confirmed:** the dated note is under the base plan's Phase 2 heading. Its wording "also accepts `#include_next` lines" became "also reads", because the check reads those lines and still rejects a header that isn't allowed |
+| Confirm P2-08 in `AGENTS.md` | **Confirmed as designed:** `AGENTS.md` doesn't mention `main.cpp` yet. The edit waits for BY's answer to §5 Q-3 (§3.11) |
+| Positive case: `#include_next <stdint.h>` must build | **Checked in scratch, with a different result than the review expected.** The include check passes it, as it should. The compile then fails, but because of `-Wpedantic -Werror` ("'#include_next' is a GCC extension"), not because of the regex. So no project file that is compiled can use `#include_next` at all. The widened check still matters for files the current configuration doesn't compile. Recorded in the build-status note and the §3.1 notes; no code change |
+| A non-redirected run after `chcp 437` | **Added** to §3.10 check 3. The expected result differs from the review's: ✅ shows correctly, because the runner sets UTF-8 itself, and 437 is restored afterwards. Mojibake is expected only if the console refuses UTF-8 |
+| Wording: "the order … doesn't matter" | **Fixed** in the §3.1 notes: files can be written in any order, and a configure before all of them exist fails, which is the intended guard |

@@ -104,3 +104,12 @@ The two paths worth a second manual check in §3.10 after the review:
 3. Optional: tighten the §3.1 wording "The order … doesn't matter" to make clear that a *build* mid-way fails; only *writing* in any order works.
 
 No re-review needed for the fixes themselves — they are exact and their evidence is stated. The plan is ready to implement against the provisional answers in §5 once the two outside checks are confirmed.
+
+## Resolution (2026‑10‑26)
+
+Resolved in [`Phase 2 plan.md`](Phase%202%20plan.md) §8.2. The review text above is unchanged.
+- **P2-07 confirmed:** the base-plan note exists; "accepts" became "reads".
+- **P2-08 confirmed as designed:** it waits for Q-3.
+- **The `#include_next <stdint.h>` case was run in scratch.** The include check passes it, but `-Wpedantic -Werror` rejects every `#include_next` at compile time, so it can't build. Recorded; no code change.
+- **The `chcp 437` run was added** to §3.10 check 3. Because the runner sets UTF-8 itself, the expected result is a correct ✅, not mojibake.
+- **The wording was tightened.**
