@@ -1,154 +1,106 @@
-Here is a check of the Phase 2 plan against the base plan, the spec, `AGENTS.md` and the earlier `Found Issues.md`. I traced the CMake logic, the glob filters, the include-check regex, the console handling and the test-runner additions, and cross-checked the claimed scratch-build results.
+Here is a check of the revised Phase 2 plan against the previous review and its own §8 resolution table.
 
 ## Verdict
 
-**Approvable**, with a handful of small fixes. The plan is unusually thorough: it documents every departure from the base plan (§4), it names the assumptions (§5), and it shows the actual scratch-build evidence for the tricky parts (glob pickup, include check on both platform configurations, `-Werror` clean build, redirected run, `ctest`, failing check). Nothing in it contradicts the spec.
+**Approvable.** Every finding from `Phase 2 Found Issues.md` is either fixed in the code or consciously declined with a stated reason. The changes are the ones the review recommended, they do not introduce new behaviour, and the scratch re-build evidence in the build-status block backs the tricky ones (P2-03 `#include_next`, P2-01 redirected code page, P2-02 missing file).
 
-The issues below are mostly robustness of the new CMake and PC console code, not plan-level design problems.
+Two items in §8 need verification **outside** this document because they claim edits to files not in front of me.
 
-## What is solid and does not need discussion
+## Per-finding verification
 
-- **Platform selection by prefix** matches `AGENTS.md` §1 and spec §13.37 exactly: unprefixed files go to `common_files`, `pc_*` to `pc_files`, `mc_*` to `mc_files`; `printer` compiles `common + (pc or mc)`.
-- **Include check** follows `AGENTS.md` §1 (“a header follows the strictest area of any file that includes it”): `common_files` + `mc_files` + the named `pc_` chip headers + `Tests/mc/` + `main.cpp` + `Tests/Tests.hpp`. The `pc_headers_under_common_rules` list captures the rule that shared driver code pulling in PC chip headers forces those headers under Common rules. Correct.
-- **`printer_check_includes`** is the base plan's function, unchanged; the regex `^[ \t]*#[ \t]*include[ \t]*<` covers the legitimate spelling variants (`# include <x>`, `#include<x>`); commented-out lines are correctly skipped.
-- **`CONFIGURE_DEPENDS`** on the globs is what makes the “new file picked up, new `<array>` fails the build” checks work without a manual reconfigure. The scratch evidence confirms both.
-- **Move of `config_mc_check` to Phase 6** is correct: the base plan already said it was “for Phase 6”; the Phase 2 plan resolves the ambiguity and documents it in §4.
-- **MC preset behaviour change** (build `printer` when a toolchain exists, rather than stop with “not available yet”) is a real departure from the base plan, but the plan documents it and justifies it (§5 Q-6, §4). The alternative would have stalled the first ARM compile until the MC Hardware plan.
-- **`main.cpp` moves from “includes config.hpp” to “runs the tests”**, which is exactly the interim the base plan’s §1 program implies before Phase 5 adds the Printer lines back.
-- **`TestResults.hpp` gets `<cstddef>` for `size_t`**; the base plan’s version got it only indirectly. Good catch.
-- **UTF-8 console handling** on Windows is a real problem the base plan didn’t address, and the emoji summary needs it.
+### P2-01 — Code page restore guard
 
-## Issues introduced by Phase 2
-
-### P2-01 (Medium) — Console code page restore with `previousCodePage == 0`
-
-**Location:** §3.6 `pc_Tests.cpp`, the `_WIN32` block.
-
+**§3.6:**
 ```cpp
-const UINT previousCodePage = GetConsoleOutputCP();
-SetConsoleOutputCP(CP_UTF8);
+#ifdef _WIN32
+    if (previousCodePage != 0) {   // 0: no console attached, nothing to restore
+        SetConsoleOutputCP(previousCodePage);
+    }
+#endif
+```
+✅ Fixed. The comment names the exact condition the review described. §3.10 check 3 now exercises the redirected path under two code pages, which was the missing coverage.
+
+### P2-02 — Missing checked file
+
+The plan's position is **"no change needed, the premise doesn't hold"**, and it says `file(STRINGS)` on a missing file fails configure. I independently believe this is right (default CMake behaviour since very early versions), and the scratch table now records:
+
+> `Tests/Tests.hpp` removed, `cmake --preset pc` → configure fails: `file STRINGS file "…/Tests/Tests.hpp" cannot be read`
+
+✅ Resolved, with evidence. The §3.1 note ("A listed file that is missing fails configure … The order in which §3.1–§3.8 are written therefore doesn't matter") is now accurate.
+
+One minor wording nit, not blocking: "order of writing doesn't matter" is true only in the sense that any order will eventually produce a valid tree, because a build mid-way fails loudly. A reader might take it to mean "you can build at any point". Suggest: *"The order in which §3.1–§3.8 are written doesn't matter; a build before all listed files exist fails configure with 'cannot be read', which is the intended guard."*
+
+### P2-03 — `#include_next`
+
+**§3.1** now uses:
+
+```cmake
+file(STRINGS "${file}" lines REGEX "^[ \t]*#[ \t]*include(_next)?[ \t]*<")
 …
-SetConsoleOutputCP(previousCodePage);
+string(REGEX REPLACE "^[ \t]*#[ \t]*include(_next)?[ \t]*<([^>]+)>.*" "\\2" header "${line}")
 ```
 
-When `printer_2` is run under `ctest`, or as `printer_2 > out.txt`, there may be no attached console. `GetConsoleOutputCP()` can return `0` in that case. `SetConsoleOutputCP(0)` at the end is not a valid code-page value (valid pages start at 1; `0` is not in the documented set), so the restore silently fails. The forward `SetConsoleOutputCP(CP_UTF8)` is also a no-op when there is no console; that is harmless, but the code should not pretend it can restore to `0`.
+✅ Fixed. Tracing both cases:
 
-**Fix:**
+- `#include <array>` → group 1 empty, group 2 = `array`. ✓
+- `#include_next <array>` → group 1 = `_next`, group 2 = `array`. ✓
+- `# include<array>` → `^[ \t]*#[ \t]*include` still matches; group 2 = `array`. ✓
 
-```cpp
-if (previousCodePage != 0) {
-    SetConsoleOutputCP(previousCodePage);
-}
-```
+The extra `_next` cannot cause a false positive for `#include X` because `(_next)?` only matches when the next characters are `_next`, and then `<` must follow. `#includeX` → no match. Good. §6 is updated to say the check now covers `include_next`. Scratch evidence confirms the three spellings are rejected.
 
-The forward call can stay unconditional; it either works or is a no-op. This also matters because the scratch run did exercise the redirected path (`printer_2.exe > out.txt`, §3.9) and reported exit 0, which it would, but the restore line was not checked.
+### P2-04 — `LINKER_LANGUAGE CXX` on the empty archive
 
-### P2-02 (Medium) — File creation order matters; nothing in the plan states it
+**§3.1 note:** "It is a temporary workaround: Phase 4 removes the line when its first `.cpp` lands."
 
-**Location:** §3.1 `printer_check_includes(...)` lists `Tests/Tests.hpp` and `main.cpp`; §3.4–§3.8 create or edit them.
+✅ Fixed as a note. The optional `PrinterVersion.cpp` was declined with the rationale "a file with no spec basis". Reasonable; the workaround costs nothing at this stage and Phase 4 removes it naturally.
 
-If CMake configures **before** `Tests/Tests.hpp` exists, `file(STRINGS "<missing>")` produces no lines and the check silently passes. The scratch build worked because all files already existed. In the actual implementation, the CMakeLists.txt from §3.1 can only be written after §3.4–§3.8 exist, otherwise the check is trivially green for those entries and the reader will believe the check ran when it did not.
+One nit: the note says Phase 4 "removes the line", but a reader should not remove it while the archive is still empty. Since Phase 4 adds `Stream.cpp` in the same step, the wording is fine.
 
-**Fix:** add an explicit step order to §3: “Create `Tests/Tests.hpp` and `Tests/pc/*` first (§3.4–§3.8), then write `CMakeLists.txt`, `CMakePresets.json` and `cmake/arm-none-eabi.cmake` (§3.1–§3.3).” Optionally, make `printer_check_includes` fail when a listed path does not exist:
+### P2-05 — `add_test` target name
 
+No change, with a stated rationale: `add_test(COMMAND printer_2)` resolves a target name to its output file, which is documented CMake behaviour; a rename would change the test's `NAME` and the `COMMAND` together. ✅ Reasonable.
+
+### P2-06 — `enable_testing()` placement
+
+**§3.1:**
 ```cmake
-if(NOT EXISTS "${file}")
-    message(FATAL_ERROR "${file}: included in the check but missing")
-endif()
+enable_testing()   # PC only: ctest runs the demo with its tests; the MC suite runs on the target
 ```
+✅ Fixed with an inline comment. Placement inside the `if` is now justified.
 
-That turns a silent gap into a configure error.
+### P2-07 — Base plan still describes the original Phase 2
 
-### P2-03 (Low) — `#include_next <header>` bypasses the check
+The plan's §8 claims a "dated note in the base plan's Phase 2 points to this plan's §4". ⚠️ **Cannot verify** — the base plan is not in this bundle. Please confirm the base plan actually has the note, or add it as a follow-up step in §3.11.
 
-**Location:** §3.1, regex `^[ \t]*#[ \t]*include[ \t]*<`.
+If the note is missing, the practical consequence is that the base plan's Phase 2 table (item 4 "`config_mc_check` in Phase 2", item 5 "`mc` preset stops with a clear message") reads as current and contradicts §4 of this plan. That is exactly the kind of doc drift the handoff entries are meant to prevent.
 
-`#include_next` is a GCC extension, rarely used in this project, but the check regex won't match it. If a Common or MC file ever contains `#include_next <array>`, the check passes and the code compiles on the host, then fails at the MC link or on the ARM compiler’s include path. The plan’s §6 Risks lists “only `#include <...>` lines” but does not call out `#include_next` specifically.
+### P2-08 — `main.cpp` in `AGENTS.md` §1
 
-**Fix (cheap):** widen the file-level filter to include `include_next` and then a literal `<` in the header extraction, or add a sentence to §6: “`#include_next <…>` is not checked; code review covers it.” I would do the sentence; there is no real risk of anyone using `#include_next` in this project.
+The plan schedules this as an implementation step (§3.11): "add `main.cpp` to the Common row of the area table in the same revision, so the rule is in the table and not only in this plan. If BY decides otherwise, `main.cpp` leaves the §3.1 check list instead."
 
-### P2-04 (Low) — Empty `printer` archive + `LINKER_LANGUAGE CXX`
+✅ Correct shape: the doc change is coupled to the code decision, not silently made. ⚠️ Depends on Q-3's answer.
 
-**Location:** §3.1, `add_library(printer STATIC …)` with `set_target_properties(printer PROPERTIES LINKER_LANGUAGE CXX)`.
+## What is still open (and correctly so)
 
-This works on MinGW (scratch evidence). It is a workaround for “no `.cpp` yet”; as soon as Phase 4 adds `Stream.cpp`, the property is unnecessary and can be removed. On a different linker or `ar` implementation, an empty archive could warn. The plan already notes it is temporary. No change needed beyond:
+- **P2-07 / P2-08 verification.** Outside this document.
+- **§5 Q-1…Q-7.** All have provisional answers used in §3. Not approval blockers; the plan is implementable against the provisional answers, and Q-6 (ARM toolchain present, `printer` only) is explicitly flagged as untested.
 
-- **Do not carry `LINKER_LANGUAGE CXX` forever.** Remove it in Phase 4 when the first `.cpp` arrives.
-- Optionally, create a one-line `Printer/Version.cpp` (or `Hardware/PrinterVersion.cpp`) that returns `const char* printerVersion();`, so the archive is real from Phase 2. That gives a natural symbol to link and removes the workaround. Not necessary; a note is enough.
+## Risk paths that survive the fixes
 
-### P2-05 (Low) — `add_test(COMMAND printer_2)` vs `$<TARGET_FILE:printer_2>`
+The two paths worth a second manual check in §3.10 after the review:
 
-**Location:** §3.1, `add_test(NAME printer_2 COMMAND printer_2)`.
+1. **A Common file with `#include_next <array>` was correctly rejected in scratch, but the plan does not specify a check for a legitimate `#include_next <stdint.h>`.** This is the interesting case — the allow-list contains `stdint.h`, so `#include_next <stdint.h>` should pass. Worth adding as a fifth manual check: in a Common file, `#include_next <stdint.h>` must build (in scratch it isn't tested). If it fails, the regex is too strict and the fix is to only reject `_next` when the header is *not* allowed, or to accept `include_next` with the same allow-list.
 
-CMake resolves a bare `printer_2` here to the target’s output location because a target by that name exists. This works and is documented behaviour. The more explicit spelling is:
+   In practice this is a corner case unlikely to matter — `#include_next` is a libc mechanism, not user code — but it is the natural boundary of the fix and cheap to test.
 
-```cmake
-add_test(NAME printer_2 COMMAND $<TARGET_FILE:printer_2>)
-```
+2. **Code page restore under `chcp 65001 → run → chcp` is tested (§3.10 check 3), but the same check under `chcp 437 → run` is also in the plan, which is good.** Adding a third case: run from a shell that already has a non-UTF-8 code page set (e.g. `chcp 437` in cmd, then launch the exe) and confirm emoji is mojibake but no crash and code page restored to 437. This validates that the fallback path behaves reasonably when UTF-8 can't be set (e.g. the console rejects it).
 
-It is unambiguous and survives a rename of the target. The plan’s version is correct; the explicit form is a style preference, not a bug.
+## Approval recommendation
 
-### P2-06 (Low) — `enable_testing()` placement
+**Approve Phase 2** with:
 
-**Location:** §3.1, inside `if(PRINTER_PLATFORM STREQUAL "PC")`.
+1. Confirm P2-07 and P2-08 in the actual files (base plan, `AGENTS.md`) before implementing, since the plan's §8 says they are fixed.
+2. Optional: add the `#include_next <stdint.h>` positive case to §3.10 as a fifth check. Not blocking.
+3. Optional: tighten the §3.1 wording "The order … doesn't matter" to make clear that a *build* mid-way fails; only *writing* in any order works.
 
-`enable_testing()` is conventionally called at the top level. Inside an `if` in the same directory scope it still works (`add_test` follows immediately), but the placement is non-standard and will look odd to reviewers. Acceptable; a comment next to it would help (“only enabled on the PC; the MC suite does not run under `ctest`”).
-
-### P2-07 (Documentation consistency, Low) — Base plan still says Phase 2 builds `config_mc_check` and stops the `mc` preset
-
-**Location:** Base plan Phase 2, item 4 and item 5; this plan §4.
-
-The base plan says:
-- `config_mc_check` is a Phase 2 target → moved to Phase 6 here.
-- `mc` preset stops with a clear message if no ARM toolchain → still true in the not-found path, but with a toolchain this plan builds `printer`, which the base plan didn’t anticipate.
-
-Both departures are documented in §4, but the base plan itself is not updated. This will confuse a reader who goes from base plan to Phase 2 plan. **Recommendation:** a short Phase 2 note in the base plan, or a note in the handoff entry, saying “Phase 2 plan §4 documents two departures from this table; the table reflects the pre-implementation plan”.
-
-### P2-08 (Very Low) — `main.cpp` is added to the include check but the file is not mentioned in `AGENTS.md` §1
-
-**Location:** §3.1, §5 Q-3.
-
-The plan does the right thing (checking `main.cpp` under Common rules, because the MC compiles it) but `AGENTS.md` §1’s area table doesn’t mention `main.cpp`. Q-3 proposes adding the row. That is a doc change, not a code change; no blocker. It should be done in the same revision as Phase 2, so future contributors see the rule in the table rather than only in the plan.
-
-## Items from `Found Issues.md` that this plan does not resolve (and correctly so)
-
-None of the High/Medium items in `Found Issues.md` are Phase 2’s responsibility:
-
-- **F-01 … F-06, F-08, F-11** — Phase 4/5 API and test issues. Unchanged, correctly deferred.
-- **F-09** — `FileStream` default name. Phase 4.
-- **F-10** — `isValid()` does not check `stopBits`/`flowControl`. Still in `config.hpp`. This plan doesn’t touch `config.hpp`, so it remains an open Medium item to resolve before Phase 3 static_asserts on `isValid`.
-- **F-12** — Stale base-plan build status. This plan correctly does not fix the base plan’s text, but P2-07 above is a related doc-consistency point.
-- **F-13** — Manual include check until Phase 2. This plan **resolves** it: the include check becomes automatic from this phase on.
-- **F-14 … F-17** — Phase 4/5.
-
-Also unchanged from the earlier review of `config.hpp`: **D-1** (`baudRate` vs `baudrate` in spec) and **D-2** (`auto` vs explicit `const char*` for `defaultFileName`). Not Phase 2’s concern; still worth fixing in the next spec revision.
-
-## Risk paths worth adding to the plan
-
-The plan’s §3.10 manual checks cover the include-check path and the failing-check path well. Two more risk paths are worth adding to the manual-check list:
-
-| New check | Why |
-|---|---|
-| Delete `Tests/Tests.hpp`, run `cmake --preset pc`, restore | Confirms P2-02: either the check errors (with the recommended guard) or the silent-gap behaviour is observed and recorded |
-| Run `printer_2.exe > out.txt` under a UTF-8 console and a non-UTF-8 console | Confirms P2-01: with the recommended guard, no code page is corrupted; without the guard, `SetConsoleOutputCP(0)` is a silent no-op and `chcp` shows the original code page afterwards |
-
-## Recommendation
-
-**Approve Phase 2** with the following amendments folded into the plan before implementation:
-
-1. **P2-01:** guard `SetConsoleOutputCP(previousCodePage)` with `previousCodePage != 0`.
-2. **P2-02:** state the file creation order in §3 (tests and `Tests/Tests.hpp` first, then CMake files), and optionally make `printer_check_includes` fail on a missing file.
-3. **P2-03:** add one sentence to §6 that `#include_next <…>` is not caught by the check and is covered by code review.
-4. **P2-04:** note in §3.1 that `LINKER_LANGUAGE CXX` is temporary and is removed in Phase 4 when `Stream.cpp` lands; optionally add a one-line `Printer/PrinterVersion.cpp` instead, so the archive is real from Phase 2.
-5. **P2-07:** add a Phase 2 note in the base plan (or the handoff entry) recording the two departures documented in §4, so the base plan does not read as current.
-6. **P2-08:** add the `main.cpp` row to `AGENTS.md` §1 in the same revision, per §5 Q-3.
-7. Optional style items P2-05 (`$<TARGET_FILE:printer_2>`) and P2-06 (`enable_testing()` placement + comment).
-
-None of these change the plan’s structure or the scratch evidence; they are robustness and documentation fixes that are cheap to make now and expensive to discover later.
-
-## Resolution (2026‑10‑26)
-
-Resolved in [`Phase 2 plan.md`](Phase%202%20plan.md) §8, with each finding rechecked in the scratch build. The review text above is unchanged.
-- **Fixed:** P2-01, P2-03 (in the code, not only documented), P2-04 (as a note), P2-06, P2-07 and P2-08 (once BY answers Q-3).
-- **No change needed:** P2-02 (a missing file already fails configure with "cannot be read") and P2-05 (style).
-- **Out of date:** F-10, D-1 and D-2 were already resolved (spec §13.59, §13.61, §13.62).
+No re-review needed for the fixes themselves — they are exact and their evidence is stated. The plan is ready to implement against the provisional answers in §5 once the two outside checks are confirmed.
