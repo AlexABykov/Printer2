@@ -176,6 +176,38 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 9) — **`Plans/Config/Phase 2 plan.md` written: presets, prefix-based source selection, the include allow-list, and the PC test suite with `ConfigTests`. Prototyped in a scratch copy, green; the repository's source is unchanged. Awaiting BY's approval.**
+
+**State.** Documentation only in the repository: the new plan and this entry, uncommitted (BY commits). No source file or `CMakeLists.txt` was changed. `.gitignore` and `Tests/pc/` are still untracked (session 8, open item 1).
+
+### What changed
+
+- **`Plans/Config/Phase 2 plan.md`, new:** the full content of `CMakeLists.txt`, `CMakePresets.json`, `cmake/arm-none-eabi.cmake`, `Tests/Tests.hpp`, `Tests/pc/TestResults.hpp`, `Tests/pc/pc_Tests.cpp`, the `runConfigTests()` addition to `test_config.cpp`, and the new `main.cpp`. Also done criteria, manual checks, the differences from the base plan (§4), seven questions (§5) and risks.
+
+### Built
+
+In a scratch copy (`%TEMP%/p2_phase2`), not in the repository. MinGW g++ 15.2.0 and CMake 4.3.1, in Git Bash. The plan's build-status table has the full list: `cmake --preset pc` and `cmake --build --preset pc` succeeded under `-Werror`; `printer_2.exe` ran `ConfigTests` (1 of 1 passed) and exited 0; `ctest` passed. A deliberately failing check gave exit 1. `<array>` in `config.hpp` or `Tests/Tests.hpp` failed the next plain build. `cmake --preset mc` stopped with "arm-none-eabi-g++ was not found". No ARM toolchain is installed.
+
+### Decisions
+
+None new. The plan's §5 questions Q-1 … Q-7 carry provisional answers, and the main ones are:
+- sources are collected by glob;
+- `-Werror` is set per target;
+- `main.cpp` counts as Common;
+- the generator is MinGW Makefiles;
+- the runner switches the console to UTF-8 and restores the old code page;
+- with an ARM toolchain, the MC configuration defines `printer` only.
+
+### Open
+
+1. **BY's approval of `Phase 2 plan.md`**, and answers to its §5 questions.
+2. **`Config Base Plan.md` approval** (session 7, open item 1). The Phase 2 plan moves the `config_mc_check` target to Phase 6 (plan §4).
+3. **Still open from earlier sessions:** as listed in sessions 6 and 8.
+
+### Notes for the incoming developer
+
+- **The heredoc trap.** Writing `"\\1"` through a Bash heredoc in this environment produced `"\1"`, and CMake then failed with "Invalid character escape '\1'". When implementing §3.1, write the file with an editor tool, then check line 24 for `"\\1"` and the test filter for `\\.cpp`.
+
 ## Mailbox entry — 2026-10-26 (session 8) — **Implementation review 000 of `config.hpp` resolved. BY's edits (`baudRate`, `auto`, indentation) stay, and the spec and plans now follow the code. The build is still green.**
 
 **State.** Documentation only; no source file changed in this session. BY's own edits to `Printer/Config/config.hpp` were rebuilt and pass. BY committed session 7 and the review (`b9061d6`, `bf12d3a`), but **`.gitignore` and `Tests/pc/` are still untracked**, so those commits don't include them. The changes below are in the working tree, uncommitted (BY commits).
