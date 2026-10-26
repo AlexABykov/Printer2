@@ -176,6 +176,43 @@ These are proposed project rules; replace them when the owner states different o
 
 New entries go directly below this line, newest first.
 
+## Mailbox entry — 2026-10-26 (session 10) — **The review `Plans/Config/Phase 2 Found Issues.md` is resolved: 6 findings fixed, 2 needed no change. The include check now also catches `#include_next`. Rebuilt in scratch, still green. The Phase 2 plan awaits BY's approval.**
+
+**State.** Documentation only in the repository; the source is still unchanged. The changes below are in the working tree, uncommitted (BY commits).
+
+### What changed
+
+- **`Plans/Config/Phase 2 plan.md`:**
+  - **§3.1:** the include-check regex accepts `#include_next` (P2-03), and `enable_testing()` has a comment (P2-06). New notes say that a missing listed file fails configure (P2-02) and that `LINKER_LANGUAGE CXX` goes away in Phase 4 (P2-04).
+  - **§3.6:** the code-page restore is guarded against 0 (P2-01).
+  - **§3.10:** two manual checks added (redirected runs under two code pages, a missing checked file).
+  - **§3.11:** the `AGENTS.md` `main.cpp` row, depending on Q-3 (P2-08).
+  - **New §8:** the resolution table, plus a build-status addendum.
+- **`Plans/Config/Config Base Plan.md`:** a dated note under Phase 2 that points to the detailed plan's departures (P2-07).
+- **`Plans/Config/Phase 2 Found Issues.md`:** a "Resolution (2026‑10‑26)" section at the end; the review text is unchanged.
+
+### Built
+
+The same scratch copy (`%TEMP%/p2_phase2`), toolchain and commands as session 9, after the fixes:
+- a fresh `cmake --preset pc` and build succeeded;
+- `printer_2.exe` passed 1 of 1 and exited 0, and so did the redirected run;
+- `ctest` passed.
+
+`#include_next <array>`, `#include <array>` and `# include<array>` in `config.hpp` are each rejected. With `Tests/Tests.hpp` removed, configure fails with "cannot be read".
+
+### Decisions
+
+None new. P2-02 was rejected on evidence: its premise, that a missing file passes silently, was disproved in scratch. P2-05 was declined as style. The plan's §5 questions are still open.
+
+### Open
+
+1. **BY's approval of `Phase 2 plan.md`**, and answers to §5 Q-1 … Q-7. Q-3 also decides the `AGENTS.md` edit.
+2. **Still open:** as listed in session 9.
+
+### Notes for the incoming developer
+
+- **Correction (2026‑10‑26), session 9's heredoc note.** The regex's replacement is now `"\\2"`, not `"\\1"`, because of the added `(_next)?` group. The trap is the same: the shell heredoc collapsed `"\\2"` in this session's plan text too, and it was fixed with the Edit tool. Check both `\\` spots after writing `CMakeLists.txt`.
+
 ## Mailbox entry — 2026-10-26 (session 9) — **`Plans/Config/Phase 2 plan.md` written: presets, prefix-based source selection, the include allow-list, and the PC test suite with `ConfigTests`. Prototyped in a scratch copy, green; the repository's source is unchanged. Awaiting BY's approval.**
 
 **State.** Documentation only in the repository: the new plan and this entry, uncommitted (BY commits). No source file or `CMakeLists.txt` was changed. `.gitignore` and `Tests/pc/` are still untracked (session 8, open item 1).

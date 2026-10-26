@@ -1,6 +1,6 @@
 # Phase 2 Plan — Platform selection, CMake and the PC test suite
 **Status:** Draft, awaiting BY's approval. Implementation starts only after approval.  
-**Date:** 2026‑10‑26  
+**Date:** 2026‑10‑26 (revised 2026‑10‑26: review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) resolved, §8)  
 **Parent:** [`Config Base Plan.md`](Config%20Base%20Plan.md), Phase 2 (and §4a, the PC test suite)  
 **Spec:** [`Config Specification.md`](Config%20Specification.md) §1.1, §11, §12, §13.28, §13.35, §13.36, §13.37, §13.39, §13.41  
 **Rules:** [`AGENTS.md`](../../AGENTS.md) §1 (code areas), §2.4 (enforcement), §4 (tests)
@@ -24,6 +24,14 @@
 > | Include path | `cmake-build-pc/CMakeFiles/printer_2.dir/includes_CXX.rsp` | `-I<repository root>` only, so no vendor header is reachable |
 >
 > No `arm-none-eabi` toolchain is installed, so only the "not found" path of the `mc` preset was exercised (§5 Q-6).
+>
+> **Rebuilt after the review (2026‑10‑26, §8).** The same scratch copy was rebuilt with the review fixes: the include check widened to `#include_next`, the guarded code-page restore, and the `enable_testing()` comment. A fresh `cmake --preset pc` and build succeeded; `printer_2.exe`, the redirected run and `ctest` passed as before. Three more checks:
+>
+> | Check | Result |
+> |---|---|
+> | `#include_next <array>` in `config.hpp`, plain build | rejected (before the fix, configure passed) |
+> | `#include <array>` and `# include<array>` in `config.hpp`, plain build | both still rejected; the clean build passes again after reverting |
+> | `Tests/Tests.hpp` removed, `cmake --preset pc` | configure fails: "file STRINGS file "…/Tests/Tests.hpp" cannot be read"; then restored |
 
 ## 1. Goal and done criteria
 
@@ -82,9 +90,9 @@ set(PRINTER_ALLOWED_SYSTEM_HEADERS cstdint stdint.h stddef.h stdarg.h limits.h f
 function(printer_check_includes)
     foreach(file IN LISTS ARGN)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${file}")
-        file(STRINGS "${file}" lines REGEX "^[ \t]*#[ \t]*include[ \t]*<")
+        file(STRINGS "${file}" lines REGEX "^[ \t]*#[ \t]*include(_next)?[ \t]*<")
         foreach(line IN LISTS lines)
-            string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*<([^>]+)>.*" "\\1" header "${line}")
+            string(REGEX REPLACE "^[ \t]*#[ \t]*include(_next)?[ \t]*<([^>]+)>.*" "\\2" header "${line}")
             if(NOT header IN_LIST PRINTER_ALLOWED_SYSTEM_HEADERS)
                 message(FATAL_ERROR "${file}: <${header}> is not allowed in Common or MC code (AGENTS.md §2)")
             endif()
@@ -152,7 +160,7 @@ if(PRINTER_PLATFORM STREQUAL "PC")
     target_link_libraries(printer_2 PRIVATE printer)
     printer_warnings(printer_2)
 
-    enable_testing()
+    enable_testing()   # PC only: ctest runs the demo with its tests; the MC suite runs on the target
     add_test(NAME printer_2 COMMAND printer_2)
 else()
     message(STATUS "PRINTER_PLATFORM=MC: only the printer library is configured; the MC demo and suite come with the MC Hardware plan")
@@ -168,9 +176,10 @@ Notes on the code:
 
   The MC files are checked in **both** configurations, so a forbidden include in an `mc_*` file fails the PC build at once and doesn't wait for the first ARM build.
 - **Not checked:** `pc_*.cpp` files, `pc_*` headers that only `pc_*.cpp` files include, and `Tests/pc/` (PC code, `AGENTS.md` §3, §4).
-- **The check is the base plan's function, unchanged.** It reads each file's own `#include <...>` lines. A commented-out `// #include <array>` is not matched, because the regex wants `#` as the first non-blank character.
+- **The check is the base plan's function, widened to `#include_next`** (review P2-03). It reads each file's own `#include <...>` and `#include_next <...>` lines; the header name is now the regex's second group, hence `"\\2"`. A commented-out `// #include <array>` is not matched, because the regex wants `#` as the first non-blank character.
+- **A listed file that is missing fails configure** ("file STRINGS file … cannot be read"), so the check can't pass silently because a file doesn't exist yet (review P2-02, checked in scratch). The order in which §3.1–§3.8 are written therefore doesn't matter.
 - **Sources are collected by glob** (§5 Q-1). `CONFIGURE_DEPENDS` makes a plain build notice a new or removed file, as the scratch build showed with `pc_Probe.cpp`. The prefix filter is the whole of link-time platform selection: on the PC, `printer` compiles the Common files and the `pc_*` files, and the `mc_*` files are never compiled.
-- **`printer` has no `.cpp` file yet.** It holds `config.hpp` only, so it is an empty archive. `LINKER_LANGUAGE CXX` is needed because CMake can't infer the language from headers alone. It can stay once Phase 4 adds the first `.cpp`.
+- **`printer` has no `.cpp` file yet.** It holds `config.hpp` only, so it is an empty archive. `LINKER_LANGUAGE CXX` is needed because CMake can't infer the language from headers alone. It is a temporary workaround: Phase 4 removes the line when its first `.cpp` lands (review P2-04).
 - **`printer_warnings`** applies `-Wall -Wextra -Wpedantic -Werror` to both targets (§5 Q-2), and the MC rules' `-fno-exceptions -fno-rtti -fno-threadsafe-statics` in the MC configuration. They are set per target, so a user project that links `printer` doesn't inherit `-Werror`.
 - **The MC configuration defines only `printer`** (§5 Q-6). There is no `mc_Tests.cpp`, no startup code and no linker script yet, so an MC `printer_2` couldn't link. The MC Hardware plan adds it.
 - **`test_config_mc_host.cpp` is excluded in advance.** Phase 6 creates it as the compile-only `config_mc_check` target, so it must never become part of `printer_2`. The base plan lists `config_mc_check` under Phase 2, but it has nothing to compile before `config_mc.hpp` exists, so it moves to Phase 6 (§4).
@@ -392,7 +401,9 @@ int Tests::runAll() {
     global.printSummary();
 
 #ifdef _WIN32
-    SetConsoleOutputCP(previousCodePage);
+    if (previousCodePage != 0) {   // 0: no console attached, nothing to restore
+        SetConsoleOutputCP(previousCodePage);
+    }
 #endif
     return static_cast<int>(global.failed);
 }
@@ -471,13 +482,15 @@ The Phase 1 hand-compile commands (`g++ … -c Tests/pc/test_config.cpp`) and th
 
 1. **A failing check.** Add `r.check("deliberate failure", false);` before `return r;` in `runConfigTests()`, then build and run. Expect "❌ SOME TESTS FAILED", `- ConfigTests: deliberate failure` and exit 1. Revert.
 2. **A forbidden include.** Add `#include <array>` to `Printer/Config/config.hpp`, then run a plain `cmake --build --preset pc`, without reconfiguring. Expect configure to re-run and fail with "`<array>` is not allowed in Common or MC code". Revert, and build again.
-3. **The console** (not in the scratch run). Run `printer_2.exe` from `cmd.exe` and check that ✅ shows as an emoji, not as mojibake, and that `chcp` shows the old code page afterwards (§5 Q-5).
+3. **The console** (not in the scratch run). Run `printer_2.exe` from `cmd.exe` and check that ✅ shows as an emoji, not as mojibake, and that `chcp` shows the old code page afterwards (§5 Q-5). Repeat with `printer_2.exe > out.txt`, once after `chcp 65001` and once after `chcp 437` (or the machine's default code page): in both cases exit 0, and `chcp` shows the code page that was set before the run (review P2-01).
+4. **A missing checked file.** Rename `Tests/Tests.hpp` away, then run `cmake --preset pc`. Expect configure to fail with "cannot be read" (review P2-02). Restore it.
 
 ### 3.11 Record
 
 - A new mailbox entry in `_ProjectHandOff.md`: compiler and version, the §3.9 commands, the §3.10 results and exit codes.
 - Tick the done criteria in §1, and add a dated "Implemented" note to this plan's build-status block, as the Phase 1 plan did.
-- **Commit:** BY's (`AGENTS.md` §5). Suggested message: "Phase 2: platform presets, prefix-based source selection, include allow-list, PC test suite with ConfigTests". It covers `CMakeLists.txt`, `CMakePresets.json`, `cmake/arm-none-eabi.cmake`, `main.cpp`, `Tests/Tests.hpp` and `Tests/pc/` (four files: `TestResults.hpp`, `pc_Tests.cpp`, and the two edited ones).
+- **`AGENTS.md` §1** (review P2-08): if BY confirms §5 Q-3, add `main.cpp` to the Common row of the area table in the same revision, so the rule is in the table and not only in this plan. If BY decides otherwise, `main.cpp` leaves the §3.1 check list instead.
+- **Commit:** BY's (`AGENTS.md` §5). Suggested message: "Phase 2: platform presets, prefix-based source selection, include allow-list, PC test suite with ConfigTests". It covers `CMakeLists.txt`, `CMakePresets.json`, `cmake/arm-none-eabi.cmake`, `main.cpp`, `Tests/Tests.hpp` and `Tests/pc/` (four files: `TestResults.hpp`, `pc_Tests.cpp`, and the two edited ones), plus `AGENTS.md` if Q-3 is confirmed.
 
 ## 4. Differences from the base plan
 
@@ -508,7 +521,7 @@ Each has a provisional answer, already used in the §3 code.
 ## 6. Risks
 
 - **The named `pc_` chip headers are a list, not a pattern.** A new chip's `pc_<chip>.hpp` must be added to `pc_headers_under_common_rules` by hand. A missing entry means that header isn't checked, and the `EXISTS` filter makes a typo silent too. The MC Hardware plan must say so where it adds the chip files.
-- **The check sees only `#include <...>` lines** (base plan §7, `AGENTS.md` §2.4): not what an allowed header includes in turn, not `malloc` or `new` through an allowed header, and not a Common file including `config_pc.hpp` or `config_mc.hpp` through `"..."`. Code review still covers those.
+- **The check sees only `#include <...>` and `#include_next <...>` lines** (base plan §7, `AGENTS.md` §2.4): not what an allowed header includes in turn, not `malloc` or `new` through an allowed header, and not a Common file including `config_pc.hpp` or `config_mc.hpp` through `"..."`. Code review still covers those.
 - **The MC configuration with a real toolchain is untried** (§5 Q-6). The first ARM build (MC Hardware plan) may need changes to the toolchain file, such as CPU flags or `--specs`.
 - **CLion and presets.** Once `CMakePresets.json` exists, CLion offers the `pc` and `mc` profiles. If the `mc` profile is enabled, CLion reports the "not found" error on every reload until the ARM toolchain is installed. It can be disabled in CLion's CMake settings.
 - **`-Werror` and a newer compiler.** A future compiler may add warnings to `-Wall` / `-Wextra` that break the build without any code change. That is the intended trade-off, and the fix is in the code, not in the flags.
@@ -517,3 +530,24 @@ Each has a provisional answer, already used in the §3 code.
 ## 7. Next
 
 Phase 3 of the base plan: `Printer/Config/config_pc.hpp` (spec §9). It is data only, under the Common rules, so the §3.1 include check covers it from the moment it is created. `ConfigTests` gains its compile-time checks, or a new PC test file does, which is Phase 3's choice.
+
+## 8. Review resolution (2026‑10‑26)
+
+The review [`Phase 2 Found Issues.md`](Phase%202%20Found%20Issues.md) judged the plan approvable with small fixes. Each finding was checked against the scratch build before deciding.
+
+| ID | Finding | Resolution |
+|---|---|---|
+| P2-01 | `SetConsoleOutputCP(previousCodePage)` with `previousCodePage == 0` when no console is attached | **Fixed** in §3.6: the restore runs only for a non-zero code page. §3.10 check 3 now covers redirected runs under two code pages |
+| P2-02 | A listed file that doesn't exist yet would pass the check silently, so the order of writing the files matters | **No change needed.** The premise doesn't hold: `file(STRINGS)` on a missing file fails configure ("cannot be read"), checked in scratch (build-status note). Recorded in the §3.1 notes, and added as §3.10 check 4 |
+| P2-03 | `#include_next <header>` bypasses the check | **Fixed in the code**, not only documented: the regex accepts `include(_next)?`, and the header is the second group (`"\\2"`). Checked in scratch: `#include_next <array>` is now rejected, and `#include <array>` and `# include<array>` still are. §6 updated |
+| P2-04 | `LINKER_LANGUAGE CXX` on an empty archive is a workaround | **Fixed** as a note in §3.1: Phase 4 removes it with its first `.cpp`. The optional `Printer/PrinterVersion.cpp` is **not** added: it would be a file with no spec basis, written only to fill the archive |
+| P2-05 | `add_test(COMMAND printer_2)` vs `$<TARGET_FILE:printer_2>` | **No change.** The review calls it style only. A target name in `add_test(COMMAND …)` is replaced by the target's file, which is documented CMake behaviour, and a rename would also change the test's `NAME` in the same line |
+| P2-06 | `enable_testing()` inside the `if` | **Fixed** with a comment on the line (§3.1). It stays inside the `if`, because `ctest` has nothing to run in the MC configuration |
+| P2-07 | The base plan still describes the original Phase 2 | **Fixed:** a dated note in the base plan's Phase 2 points to this plan's §4 |
+| P2-08 | `main.cpp` is checked but not in `AGENTS.md` §1 | **Fixed** as an implementation step (§3.11), depending on BY's answer to §5 Q-3. `AGENTS.md` is not changed before that decision |
+
+**Stale parts of the review** (no action). Its section on the earlier `Found Issues.md` lists F-10 as open and D-1 / D-2 of implementation review 000 as "worth fixing in the next spec revision". All three were already resolved:
+- F-10 is documented as a limit (spec §13.59, session 6);
+- D-1 and D-2 are decisions 13.61 (`baudRate`) and 13.62 (`auto`), from session 8.
+
+F-13 (the manual include check) is resolved by this phase, as the review says.

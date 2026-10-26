@@ -145,3 +145,10 @@ The plan’s §3.10 manual checks cover the include-check path and the failing-c
 7. Optional style items P2-05 (`$<TARGET_FILE:printer_2>`) and P2-06 (`enable_testing()` placement + comment).
 
 None of these change the plan’s structure or the scratch evidence; they are robustness and documentation fixes that are cheap to make now and expensive to discover later.
+
+## Resolution (2026‑10‑26)
+
+Resolved in [`Phase 2 plan.md`](Phase%202%20plan.md) §8, with each finding rechecked in the scratch build. The review text above is unchanged.
+- **Fixed:** P2-01, P2-03 (in the code, not only documented), P2-04 (as a note), P2-06, P2-07 and P2-08 (once BY answers Q-3).
+- **No change needed:** P2-02 (a missing file already fails configure with "cannot be read") and P2-05 (style).
+- **Out of date:** F-10, D-1 and D-2 were already resolved (spec §13.59, §13.61, §13.62).
